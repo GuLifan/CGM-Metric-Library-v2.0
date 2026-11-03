@@ -1,0 +1,14 @@
+# Copy this template into a local, Git-excluded configuration with actual data paths.
+# Each discharge date must select exactly one declared source directory.
+sources:
+  - path: ../../01_OriginalData/source_5min_example
+    interval_min: 5
+    unit: mmol/L
+    to_date: '2025-06-01'
+  - path: ../../01_OriginalData/source_1min_example
+    interval_min: 1
+    unit: mmol/L
+    from_date: '2025-06-01'
+coverage_pct: 70
+night_start_hour: 0
+night_end_hour: 6
