@@ -29,3 +29,19 @@ def test_all_segments_receive_whole_window_sample_sd(monkeypatch):
     expected = np.std(values[np.isfinite(values)], ddof=1) * 18
     assert len(observed) == 2
     assert observed == pytest.approx([expected, expected])
+
+
+@pytest.mark.parametrize(
+    "times,values",
+    [
+        ([1, 2], [4, 5]),
+        (pd.date_range("2026-01-01", periods=2), [5]),
+        ([pd.Timestamp("2026-01-01")] * 2, [5, 6]),
+        ([pd.NaT], [5]),
+        (pd.date_range("2026-01-01", periods=2)[::-1], [5, 6]),
+        (pd.date_range("2026-01-01", periods=2), [np.inf, 5]),
+    ],
+)
+def test_mage_rejects_ambiguous_inputs(times, values):
+    with pytest.raises(ValueError, match="MAGE"):
+        calculate_mage(times, values)

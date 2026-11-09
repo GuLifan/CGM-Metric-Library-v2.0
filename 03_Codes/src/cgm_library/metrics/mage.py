@@ -38,7 +38,8 @@ def canonical_grid(times, values):
 def trailing_average(x, width):
     # 首个完整窗口前保持该窗口均值；中间NA以该MA窗口有效读数均值计算。
     average = pd.Series(x).rolling(width, min_periods=1).mean().to_numpy(copy=True)
-    average[:width] = np.nanmean(x[:width])
+    initial = x[:width]
+    average[:width] = np.nanmean(initial) if np.isfinite(initial).any() else np.nan
     return average
 
 
@@ -140,7 +141,21 @@ def segment_mage(x, times, window_sd):
 
 
 def calculate_mage(times, values):
+    time_index = pd.Index(times)
+    if (
+        len(time_index)
+        and not pd.api.types.is_datetime64_any_dtype(time_index.dtype)
+        and pd.api.types.infer_dtype(time_index, skipna=True) not in {"datetime", "datetime64"}
+    ):
+        raise ValueError("MAGE 需要已解析的时间向量")
+    times = pd.DatetimeIndex(time_index)
     values = np.asarray(values, float)
+    if values.ndim != 1 or len(times) != len(values):
+        raise ValueError("MAGE 时间与血糖向量长度必须一致")
+    if times.hasnans or times.has_duplicates or not times.is_monotonic_increasing:
+        raise ValueError("MAGE 时间须有效、唯一且严格递增")
+    if np.isinf(values).any() or (values <= 0).any():
+        raise ValueError("MAGE 血糖仅接受有效正数或缺失")
     finite = values[np.isfinite(values)]
     window_sd = float(finite.std(ddof=1) * 18) if len(finite) >= 2 else np.nan
     grid, x = canonical_grid(times, values)

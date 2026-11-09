@@ -1,7 +1,8 @@
 # 只作参考，不参与Python生产计算。包版本和输入必须显式固定。
 args <- commandArgs(trailingOnly=TRUE)
 .libPaths(c(args[1], .libPaths()))
-stopifnot(as.character(packageVersion("iglu")) == "4.2.2")
+iglu_namespace <- loadNamespace("iglu", lib.loc=args[1])
+stopifnot(as.character(getNamespaceVersion(iglu_namespace)) == "4.2.2")
 data <- read.csv(args[2], stringsAsFactors=FALSE)
 data$time <- as.POSIXct(data$time, tz="Asia/Shanghai")
 rows <- lapply(unique(data$id), function(id) {

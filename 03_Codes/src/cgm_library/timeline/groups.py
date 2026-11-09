@@ -12,6 +12,10 @@ class TimelineError(ValueError):
     """来源时间轴存在未获规则授权的歧义。"""
 
 
+class OverfullMinuteSlot(TimelineError):
+    """一分钟源在固定五分钟槽内出现超过五个不同时刻。"""
+
+
 def make_groups(observations: pd.DataFrame, source_interval_min: int) -> pd.DataFrame:
     """把已经去重、清洗的原始读数映射到固定来源组。
 
@@ -49,7 +53,17 @@ def make_groups(observations: pd.DataFrame, source_interval_min: int) -> pd.Data
     groups["valid_source_n"] = counts.glucose_clean.count().reindex(index, fill_value=0).astype(int)
     groups["invalid_source_n"] = groups.source_n - groups.valid_source_n
     if source_interval_min == 1 and groups.source_n.gt(5).any():
-        raise TimelineError("一分钟来源组内多于五条原始记录；需单独核查设备时钟")
+        first_overfull = groups.index[groups.source_n.gt(5)][0]
+        interval_seconds = data.timestamp.diff().dt.total_seconds().dropna()
+        slot = groups.loc[first_overfull]
+        inside = data.loc[data.group_index.eq(first_overfull), "timestamp"]
+        gaps = ", ".join(f"{seconds:g}" for seconds in inside.diff().dt.total_seconds().iloc[1:])
+        raise OverfullMinuteSlot(
+            f"一分钟来源组内多于五条原始记录；首个过满槽 {first_overfull} "
+            f"[{slot.group_start.isoformat()}, {slot.group_end.isoformat()}) 有 "
+            f"{slot.source_n} 个不同时刻，槽内相邻间隔（秒）[{gaps}]，文件相邻间隔中位数 "
+            f"{interval_seconds.median():g} 秒，请核查设备时钟"
+        )
     groups["glucose_clean"] = counts.glucose_clean.mean().reindex(index)
     valid = data.loc[data.glucose_clean.notna()]
     groups["first_valid_raw_time"] = valid.groupby("group_index").timestamp.first().reindex(index)

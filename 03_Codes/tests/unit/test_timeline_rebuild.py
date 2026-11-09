@@ -60,7 +60,8 @@ def test_two_source_groups_with_raw_valid_times_in_same_wall_clock_slot():
     start = pd.Timestamp("2026-01-01 12:50", tz="Asia/Shanghai")
     _, qc = window_view(groups, start, start + pd.Timedelta(minutes=10))
     assert qc["expected_points"] == qc["valid_points"] == 2
-    assert qc["coverage_pct"] == 100
+    assert qc["valid_minutes"] == pytest.approx(8 + 20 / 60)
+    assert qc["coverage_pct"] == pytest.approx(100 * 5 / 6)
 
 
 def test_five_minute_source_collision_is_na_with_raw_evidence():
@@ -90,3 +91,15 @@ def test_overfull_minute_group_stops_instead_of_averaging_six_values():
     times = pd.date_range("2026-01-01 08:00", periods=6, freq="30s", tz="Asia/Shanghai")
     with pytest.raises(TimelineError, match="多于五条"):
         make_groups(frame(times, [6.0] * 6), source_interval_min=1)
+
+
+@pytest.mark.parametrize("seconds", [59, 60, 61])
+def test_overfull_depends_on_slot_count(seconds):
+    times = pd.date_range("2026-01-01 08:00", periods=6, freq=f"{seconds}s", tz="Asia/Shanghai")
+    # 最后一条为缺测仍占一个不同时刻。
+    data = frame(times, [6.0] * 5 + [np.nan])
+    if seconds == 59:
+        with pytest.raises(TimelineError, match=r"6 个不同时刻.*\[59, 59, 59, 59, 59\]"):
+            make_groups(data, 1)
+    else:
+        assert make_groups(data, 1).source_n.tolist() == [5, 1]

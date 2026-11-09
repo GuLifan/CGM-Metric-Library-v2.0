@@ -4,8 +4,28 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
+
+from cgm_library.io.common import (
+    RequestMatchError,
+    anchor_precision,
+    parse_local_datetime,
+    read_csv_strings,
+)
+
+__all__ = [
+    "PATIENT_PREFIX",
+    "PUMP_PREFIX",
+    "PUMP_SOURCE_COLUMNS",
+    "REQUEST_PREFIX",
+    "RequestMatchError",
+    "augment_request",
+    "derive_pump_fields",
+    "parse_local_datetime",
+    "read_csv_strings",
+    "select_patient_source",
+    "write_csv_new",
+]
 
 REQUEST_PREFIX = ("住院号", "出院日期", "入院日期", "设备文件名")
 PUMP_PREFIX = REQUEST_PREFIX + ("胰岛素泵开始时间", "胰岛素泵停止时间")
@@ -16,53 +36,6 @@ PUMP_SOURCE_COLUMNS = (
     "德谷开始时间",
     "甘精开立时间",
 )
-
-
-class RequestMatchError(ValueError):
-    """患者来源无法按已批准的身份与时间规则唯一核对。"""
-
-
-def read_csv_strings(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    """全部列按字符串读取，避免住院号前导零和请求附加列被类型推断改写。"""
-    for encoding in ("utf-8-sig", "gb18030"):
-        try:
-            with path.open("r", encoding=encoding, newline="") as handle:
-                reader = csv.DictReader(handle)
-                headers = list(reader.fieldnames or [])
-                if not headers or len(headers) != len(set(headers)):
-                    raise RequestMatchError(f"CSV 表头为空或有重名列：{path}")
-                rows = list(reader)
-                if any(None in row for row in rows):
-                    raise RequestMatchError(f"CSV 存在多于表头的字段：{path}")
-                return headers, rows
-        except UnicodeDecodeError:
-            continue
-    raise RequestMatchError(f"CSV 编码无法识别：{path}")
-
-
-def parse_local_datetime(value: str, *, date_only_hour: int | None = None) -> datetime:
-    """北京本地时间，无夏令时；仅日期的泵开始时间按已批准规则补 12:00。"""
-    raw = str(value).strip().replace("/", "-")
-    if not raw:
-        raise RequestMatchError("必需的时间值为空")
-    try:
-        result = datetime.fromisoformat(raw)
-    except ValueError as exc:
-        # 患者原表存在单数字小时（例如 8:48），Python 的 ISO 解析不接受；
-        # 仅补充明确的本地日期/时分/秒格式，仍拒绝含糊的月日顺序和时区。
-        for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
-            try:
-                result = datetime.strptime(raw, pattern)  # noqa: DTZ007 北京本地墙上时间
-                break
-            except ValueError:
-                continue
-        else:
-            raise RequestMatchError(f"时间格式无法解析：{raw!r}") from exc
-    if result.tzinfo is not None:
-        raise RequestMatchError("输入含时区偏移；此项目要求北京本地时间字符串")
-    if len(raw) <= 10 and date_only_hour is not None:
-        result = result.replace(hour=date_only_hour)
-    return result
 
 
 def _same_stay_day(request: dict[str, str], patient: dict[str, str]) -> bool:
@@ -128,7 +101,10 @@ def derive_pump_fields(patient: dict[str, str]) -> tuple[str, str, str, str]:
         end, source = _earliest_fallback(patient)
     if end:
         parse_local_datetime(end)
-    precision = "DATE_ONLY_NOON_ON_CALCULATION" if len(start) <= 10 else "EXACT_TIME"
+    # 已发布的请求准备表使用这两个历史标签，计算表使用同一解析器的规范标签。
+    precision = {"DATE_ONLY_NOON": "DATE_ONLY_NOON_ON_CALCULATION", "EXACT": "EXACT_TIME"}[
+        anchor_precision(start, pump_start=True)
+    ]
     return start, end, source, precision
 
 
@@ -155,10 +131,9 @@ def augment_request(
     request_ids = {row["住院号"].strip() for row in request_rows}
     if set(overrides) - request_ids:
         raise RequestMatchError("人工指定包含不在本次请求表中的住院号")
-    by_id: dict[str, list[dict[str, str]]] = defaultdict(list)
-    source_row_by_identity = {id(row): index for index, row in enumerate(patient_rows, start=2)}
-    for patient in patient_rows:
-        by_id[patient["住院号"].strip()].append(patient)
+    by_id = defaultdict(list)
+    for record_number, patient in enumerate(patient_rows, start=2):
+        by_id[patient["住院号"].strip()].append((record_number, patient))
     output_headers = list(PUMP_PREFIX) + request_headers[4:]
     output_rows: list[dict[str, str]] = []
     qc_rows: list[dict[str, str | int | bool]] = []
@@ -178,9 +153,11 @@ def augment_request(
                 raise RequestMatchError("人工指定原表行的出入院自然日与请求表不符")
             match_mode = "MANUAL_SOURCE_ROW"
         else:
-            patient, match_mode = select_patient_source(request, candidates)
-            # 身份相同也不意味着来源行可以猜测；用被选对象反查物理 CSV 行。
-            source_csv_row = source_row_by_identity[id(patient)]
+            patient, match_mode = select_patient_source(
+                request, [record for _, record in candidates]
+            )
+            # 精确匹配已保证唯一；记录号始终按原表（含表头）计数。
+            source_csv_row = next(number for number, record in candidates if record == patient)
         start, end, end_source, start_precision = derive_pump_fields(patient)
         row = {
             **{key: request[key] for key in REQUEST_PREFIX},

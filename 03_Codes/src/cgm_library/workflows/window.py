@@ -27,7 +27,7 @@ def calculate_confirmed_window(
     view, qc = window_view(groups, start, end, threshold_pct=coverage_min_pct)
     qualified = bool(qc["sufficient_flag"])
     if qualified:
-        metrics = pooled_metrics(view.glucose_clean.to_numpy())
+        metrics = pooled_metrics(view.glucose_clean.to_numpy(), view.support_minutes)
         reason = ""
     else:
         metrics = pooled_metrics([])
@@ -63,9 +63,9 @@ def calculate_confirmed_window(
         counts[rule.event_type + "_any"] = int(counts[key] > 0) if qualified else np.nan
     row: dict[str, object] = {
         "window_name": window_name,
-        **qc,
         "metric_reason": reason,
         **metrics,
+        **qc,
         **modd_result,
         **counts,
     }
@@ -74,4 +74,5 @@ def calculate_confirmed_window(
     row["MAGE"] = np.nan
     row["MAGE_candidate_mmol_L"] = mage["value"] if mage else np.nan
     row["mage_reason"] = "REFERENCE_NOT_VALIDATED" if qualified else reason
+    row["mage_candidate_reason"] = mage["reason"] if mage else reason
     return row, events

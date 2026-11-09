@@ -27,7 +27,6 @@ def study_windows(
         "inpatient": (admission, discharge),
         "pre72h": (discharge - pd.Timedelta(hours=72), discharge),
         "pre24h": (discharge - pd.Timedelta(hours=24), discharge),
-        "post7d": (discharge, discharge + pd.Timedelta(days=7)),
     }
     if pump_start is not None:
         if pump_start.tzinfo is None:

@@ -9,7 +9,7 @@ from pathlib import Path
 from cgm_library.workflows.batch import run_partial_batch
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Run a traceable, non-formal partial CGM batch")
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
@@ -40,6 +40,8 @@ def main() -> None:
         )
     )
 
+    return 1 if manifest["status"] == "ALL_PATIENTS_FAILED" else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

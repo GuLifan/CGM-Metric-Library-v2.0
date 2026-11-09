@@ -12,6 +12,14 @@ NORMAL_STATES = {"", "0", "ok", "normal", "正常"}
 INVALID_STATES = {"error", "invalid", "错误", "无效"}
 
 
+class RawEvidenceError(CalculationError):
+    """文件计算已停止，仍可导出已完成的逐源行清洗证据。"""
+
+    def __init__(self, code: str, message: str, evidence: pd.DataFrame) -> None:
+        super().__init__(code, message)
+        self.evidence = evidence
+
+
 def clean_observations(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
     """返回逐源行证据、去重后的原始观测与文件级 QC，不修改读入表。"""
     required = {"raw_time", "glucose_raw", "source_row"}
@@ -32,7 +40,7 @@ def clean_observations(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, d
     evidence["date_only_imputed"] = raw_time.str.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}").fillna(
         False
     )
-    raw_value = evidence.glucose_raw.astype(str).str.strip()
+    raw_value = evidence.glucose_raw.fillna("").astype(str).str.strip()
     numeric = pd.to_numeric(raw_value, errors="coerce").astype(float)
     if "source_unit" in evidence:
         unit = evidence.source_unit.astype(str)
@@ -74,25 +82,30 @@ def clean_observations(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, d
         ],
         default="OK",
     )
+    evidence["raw_qc_reason"] = evidence["qc_reason"]
     valid_time = evidence.loc[evidence.timestamp.notna()].copy()
     if valid_time.empty:
         raise CalculationError("ERROR04", "所有原始时间戳均无法解析")
     duplicate_count = int(valid_time.timestamp.duplicated().sum())
     conflict_times = pd.DatetimeIndex([], tz=TIMEZONE)
     if duplicate_count:
-        distinct = valid_time.groupby("timestamp").glucose_numeric_mmol_L.nunique(dropna=False)
+        distinct = valid_time.groupby("timestamp").glucose_clean.nunique(dropna=True)
         conflict_times = distinct.loc[distinct.gt(1)].index
         conflict = evidence.timestamp.isin(conflict_times)
         evidence.loc[conflict, "duplicate_conflict_flag"] = True
         evidence.loc[conflict, "glucose_clean"] = np.nan
         evidence.loc[conflict, "qc_reason"] = "DUPLICATE_CONFLICT"
-        valid_time = evidence.loc[evidence.timestamp.notna()].copy()
+        # 冲突已置 NA，其余时刻至多一个不同的有效值。有效行优先，
+        # 同值或全无效取源行号最小者，使导出的代表行可复核。
+        valid_time = evidence.loc[evidence.timestamp.notna()].sort_values(
+            ["timestamp", "glucose_clean", "source_row"], na_position="last"
+        )
+    else:
+        valid_time = valid_time.sort_values("timestamp")
     evidence["is_representative"] = False
-    observations = valid_time.drop_duplicates("timestamp", keep="first").sort_values(
-        "timestamp", kind="stable"
-    )
-    evidence.loc[observations.index, "is_representative"] = True
-    observations = observations.reset_index(drop=True)
+    selected = valid_time.drop_duplicates("timestamp").index
+    evidence.loc[selected, "is_representative"] = True
+    observations = evidence.loc[selected].reset_index(drop=True)
     qc = {
         "raw_points": len(evidence),
         "duplicate_count": duplicate_count,
@@ -106,7 +119,7 @@ def clean_observations(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, d
         "device_invalid_count": int(device_invalid.sum()),
     }
     if observations.glucose_clean.notna().sum() == 0:
-        raise CalculationError("ERROR14", "该 CGM 文件没有有效正血糖读数")
+        raise RawEvidenceError("ERROR14", "该 CGM 文件没有有效正血糖读数", evidence)
     return evidence, observations, qc
 
 

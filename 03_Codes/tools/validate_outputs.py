@@ -10,7 +10,27 @@ import pandas as pd
 
 
 def validate(root: Path) -> None:
+    checksum = root / "manifest.sha256"
+    if checksum.is_file():
+        expected = checksum.read_text(encoding="ascii").split()[0]
+        if hashlib.sha256((root / "manifest.json").read_bytes()).hexdigest() != expected:
+            raise ValueError("manifest.json 哈希不一致")
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    if "schema_version" in manifest:
+        if not checksum.is_file():
+            raise ValueError("缺失 manifest.sha256")
+        from cgm_library.contracts.fields import ASSETS
+
+        required = {asset.path for asset in ASSETS.values()} | {
+            "run_state.json",
+            "environment.yaml",
+            "config.yaml",
+        }
+        if required - manifest["outputs_sha256"].keys():
+            raise ValueError("清单缺少必需资产")
+        state = json.loads((root / "run_state.json").read_text(encoding="utf-8"))
+        if state["status"] != manifest["status"]:
+            raise ValueError("运行状态与清单不一致")
     for name, expected in manifest["outputs_sha256"].items():
         path = (root / name).resolve()
         if root.resolve() not in path.parents:
@@ -29,6 +49,10 @@ def validate(root: Path) -> None:
     if not metrics.empty:
         if (metrics.valid_points > metrics.expected_points).any():
             raise ValueError("有效点超过理论点")
+        if "window_minutes" in metrics and not np.allclose(
+            metrics.coverage_pct, 100 * metrics.valid_minutes / metrics.window_minutes
+        ):
+            raise ValueError("有效支持时长与窗口覆盖不一致")
         valid = metrics[["TIR_minutes", "TAR_minutes", "TBR_minutes", "valid_minutes"]].dropna()
         if not np.allclose(
             valid.TIR_minutes + valid.TAR_minutes + valid.TBR_minutes, valid.valid_minutes

@@ -1,14 +1,16 @@
-"""不跨 NA/缺口的事件状态机；窗口归属使用来源组起点。"""
+"""CGM 事件使用窗内规划支持时长，原始观测时间独立留证。"""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
+from itertools import pairwise
 
 import numpy as np
 import pandas as pd
 
-SUPPORT = pd.Timedelta(minutes=5)
+from cgm_library.windows.coverage import MINUTE_NS, slot_support
 
 
 @dataclass(frozen=True)
@@ -18,188 +20,146 @@ class EventRule:
     minimum_min: float
     recovery_min: float
     high: bool = False
+    parent_type: str | None = None
 
 
-# 前三类为基础事件；延长事件从父事件及连续低值段关联派生。
 CONFIRMED_RULES = (
     EventRule("hypo_episode_lt3p9", 3.9, 15, 15),
     EventRule("level2_period_lt3p0", 3.0, 15, 15),
     EventRule("prolonged_hyper_gt13p9_120", 13.9, 120, 0, True),
-    EventRule("extended_hypo_lt3p9_120", 3.9, 120, 15),
-    EventRule("prolonged_level2_lt3p0_120", 3.0, 120, 15),
+    EventRule("extended_hypo_lt3p9_120", 3.9, 120, 15, parent_type="hypo_episode_lt3p9"),
+    EventRule("prolonged_level2_lt3p0_120", 3.0, 120, 15, parent_type="level2_period_lt3p0"),
 )
 
 
-def detect_events(
-    groups: pd.DataFrame,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    rule: EventRule,
-    night_start_hour: int = 0,
-    night_end_hour: int = 6,
-) -> list[dict[str, object]]:
-    """每个有效点最多支持随后五分钟，受下一点、NA、缺口和窗口末端裁剪。"""
-    if end <= start:
-        raise ValueError("事件窗口结束必须晚于开始")
-    if groups.group_start.duplicated().any():
-        raise ValueError("事件输入有重复规划槽")
-    selected = groups.loc[groups.group_start.ge(start) & groups.group_start.lt(end)].copy()
-    if selected.empty:
-        return []
-    # 一分钟来源 analysis_time 已由新裁定固定为组首；五分钟源保留其实际观测时间。
-    selected["event_time"] = selected.analysis_time.fillna(selected.group_start)
-    selected = selected.sort_values("event_time", kind="stable").reset_index(drop=True)
-    if selected.event_time.duplicated().any():
-        raise ValueError("事件时刻重复，不能任意排序")
-    events: list[dict[str, object]] = []
-    state: dict[str, object] | None = None
-    previous_support_end: pd.Timestamp | None = None
-    block_first = True
+def _spans(mask):
+    """布尔向量中每段连续真的半开下标区间。"""
+    edges = np.flatnonzero(np.diff(mask, prepend=False, append=False))
+    return zip(edges[::2], edges[1::2], strict=True)
 
-    def finish(boundary: pd.Timestamp, right_censored: bool, reason: str) -> None:
-        nonlocal state
-        if state is None:
-            return
-        if state["confirmed"] and state["max_continuous_low_min"] >= rule.minimum_min:
-            event_start = state["start"]
-            extreme = state["extreme"]
-            extreme_time = state["extreme_time"]
-            identity = f"{rule.event_type}|{event_start.isoformat()}|{start.isoformat()}"
-            events.append(
-                {
-                    "event_id": hashlib.sha256(identity.encode()).hexdigest()[:20],
-                    "event_type": rule.event_type,
-                    "event_start": event_start,
-                    "event_end": boundary,
-                    "duration_min": (boundary - event_start).total_seconds() / 60,
-                    "condition_minutes": state["condition_minutes"],
-                    "max_continuous_condition_min": state["max_continuous_low_min"],
-                    "nadir": np.nan if rule.high else extreme,
-                    "peak": extreme if rule.high else np.nan,
-                    "nadir_time": pd.NaT if rule.high else extreme_time,
-                    "peak_time": extreme_time if rule.high else pd.NaT,
-                    "left_censored": state["left_censored"],
-                    "right_censored": right_censored,
-                    "complete_event_flag": not (state["left_censored"] or right_censored),
-                    "censor_reason": reason
-                    if right_censored
-                    else ("LEFT_UNKNOWN" if state["left_censored"] else ""),
-                    "event_start_period": (
-                        "night" if night_start_hour <= event_start.hour < night_end_hour else "day"
-                    ),
-                }
-            )
-        state = None
 
-    for index, row in selected.iterrows():
-        time = row.event_time
-        if time >= end:
-            break
-        next_time = selected.event_time.iloc[index + 1] if index + 1 < len(selected) else end
-        support_end = min(time + SUPPORT, next_time, end)
-        duration_min = max(0.0, (support_end - time).total_seconds() / 60)
-        if previous_support_end is not None and time > previous_support_end:
-            finish(previous_support_end, True, "TIME_GAP")
-            block_first = True
-        value = row.glucose_clean
-        if pd.isna(value) or duration_min <= 0:
-            finish(time, True, "NA_OR_ZERO_SUPPORT")
-            previous_support_end = support_end
-            block_first = True
-            continue
-        value = float(value)
-        if not np.isfinite(value):
-            raise ValueError("事件输入含无法解释的非有限值")
-        condition = value > rule.threshold if rule.high else value < rule.threshold
-        if condition:
-            if state is None:
-                state = {
-                    "start": time,
-                    "left_censored": block_first,
-                    "confirmed": False,
-                    "continuous_low_min": 0.0,
-                    "max_continuous_low_min": 0.0,
-                    "condition_minutes": 0.0,
-                    "recovery_min": 0.0,
-                    "recovery_start": None,
-                    "extreme": value,
-                    "extreme_time": time,
-                }
-            state["continuous_low_min"] += duration_min
-            state["max_continuous_low_min"] = max(
-                state["max_continuous_low_min"], state["continuous_low_min"]
+def _scan(groups, start, end, rules, night_start=0, night_end=6):
+    view, ticks, stops = slot_support(groups, start, end)
+    values = view.glucose_clean.to_numpy(dtype=float)
+    if np.isinf(values).any():
+        raise ValueError("事件输入含非有限读数")
+    observed = (
+        view["first_valid_raw_time"]
+        if "first_valid_raw_time" in view
+        else view.get("analysis_time", view.group_start)
+    ).to_numpy()
+
+    def stamp(ns):
+        return pd.Timestamp(int(ns), unit="ns", tz=start.tz)
+
+    derived = {r.parent_type: r for r in rules if r.parent_type}
+    base = [r for r in rules if not r.parent_type]
+    if set(derived) - {r.event_type for r in base}:
+        raise ValueError("事件规则缺少父类型")
+    events = []
+    # NA 和不相邻的规划槽都是硬边界。每个连续观测块独立检测各阈值。
+    for a, b in _spans(np.isfinite(values)):
+        cuts = np.r_[a, a + 1 + np.flatnonzero(ticks[a + 1 : b] != stops[a : b - 1]), b]
+        for lo, hi in pairwise(cuts):
+            terminal = (
+                "WINDOW_OR_DEVICE_END"
+                if hi == len(ticks)
+                else (
+                    "NA_OR_ZERO_SUPPORT"
+                    if np.isnan(values[hi]) and ticks[hi] == stops[hi - 1]
+                    else "TIME_GAP"
+                )
             )
-            state["condition_minutes"] += duration_min
-            state["recovery_min"] = 0.0
-            state["recovery_start"] = None
-            state["confirmed"] = (
-                state["confirmed"] or state["continuous_low_min"] >= rule.minimum_min
-            )
-            if (value > state["extreme"]) if rule.high else (value < state["extreme"]):
-                state["extreme"] = value
-                state["extreme_time"] = time
-        elif state is not None:
-            state["continuous_low_min"] = 0.0
-            if not state["confirmed"]:
-                state = None
-            elif rule.recovery_min == 0:
-                finish(time, False, "")
-            else:
-                if state["recovery_start"] is None:
-                    state["recovery_start"] = time
-                state["recovery_min"] += duration_min
-                if state["recovery_min"] >= rule.recovery_min:
-                    finish(state["recovery_start"], False, "")
-        block_first = False
-        previous_support_end = support_end
-    if state is not None and previous_support_end is not None:
-        finish(previous_support_end, True, "WINDOW_OR_DEVICE_END")
+            for rule in base:
+                mask = (
+                    values[lo:hi] > rule.threshold if rule.high else values[lo:hi] < rule.threshold
+                )
+                runs = [(lo + l, lo + r) for l, r in _spans(mask)]
+                j = 0
+                while j < len(runs):
+                    first, last = runs[j]
+                    j += 1
+                    first_len = int(stops[last - 1] - ticks[first])
+                    if first_len < rule.minimum_min * MINUTE_NS:
+                        continue
+                    pieces = [(first, last, first_len)]
+                    # 父事件确认后，短暂恢复不结束事件；这些恢复分钟不属于连续低值段。
+                    while (
+                        j < len(runs)
+                        and ticks[runs[j][0]] - stops[last - 1] < rule.recovery_min * MINUTE_NS
+                    ):
+                        l, last = runs[j]
+                        pieces.append((l, last, int(stops[last - 1] - ticks[l])))
+                        j += 1
+                    tail = int(stops[hi - 1] - stops[last - 1])
+                    recovered = last < hi and tail >= rule.recovery_min * MINUTE_NS
+                    boundary = stops[last - 1] if recovered else stops[hi - 1]
+                    left_censored = first == lo
+                    segment = values[first:last]
+                    extreme = first + (np.argmax(segment) if rule.high else np.argmin(segment))
+                    t0, te, tx = stamp(ticks[first]), stamp(boundary), stamp(ticks[extreme])
+                    token = f"{rule.event_type}|{t0.isoformat()}|{start.isoformat()}"
+                    parent = {
+                        "event_id": hashlib.sha256(token.encode()).hexdigest()[:20],
+                        "event_type": rule.event_type,
+                        "event_start": t0,
+                        "event_end": te,
+                        "duration_min": (boundary - ticks[first]) / MINUTE_NS,
+                        "condition_minutes": sum(p[2] for p in pieces) / MINUTE_NS,
+                        "max_continuous_condition_min": max(p[2] for p in pieces) / MINUTE_NS,
+                        "nadir": np.nan if rule.high else float(values[extreme]),
+                        "peak": float(values[extreme]) if rule.high else np.nan,
+                        "nadir_time": pd.NaT if rule.high else tx,
+                        "peak_time": tx if rule.high else pd.NaT,
+                        "first_observed_time": observed[first],
+                        "extreme_observed_time": observed[extreme],
+                        "left_censored": bool(left_censored),
+                        "right_censored": not recovered,
+                        "complete_event_flag": bool(recovered and not left_censored),
+                        "censor_reason": terminal
+                        if not recovered
+                        else ("LEFT_UNKNOWN" if left_censored else ""),
+                        "event_start_period": "night"
+                        if night_start <= t0.hour < night_end
+                        else "day",
+                    }
+                    events.append(parent)
+                    child = derived.get(rule.event_type)
+                    if child:
+                        segments = [
+                            {
+                                "start": stamp(ticks[l]).isoformat(),
+                                "end": stamp(stops[r - 1]).isoformat(),
+                                "duration_min": n / MINUTE_NS,
+                            }
+                            for l, r, n in pieces
+                            if n >= child.minimum_min * MINUTE_NS
+                        ]
+                        if segments:
+                            identity = child.event_type + parent["event_id"]
+                            events.append(
+                                parent
+                                | {
+                                    "event_type": child.event_type,
+                                    "event_id": hashlib.sha256(identity.encode()).hexdigest()[:20],
+                                    "parent_event_id": parent["event_id"],
+                                    "continuous_low_segments_n": len(segments),
+                                    "continuous_low_segments_json": json.dumps(
+                                        segments, ensure_ascii=False
+                                    ),
+                                }
+                            )
     return events
 
 
-def confirmed_event_types(
-    groups: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp
-) -> list[dict[str, object]]:
-    """先识别父事件，再保存各连续120分钟子段，避免把一事件重复计数。"""
-    import json
+def detect_events(groups, start, end, rule, night_start_hour=0, night_end_hour=6):
+    """公开单规则入口，保留直接调用延长阈值规则的行为。"""
+    from dataclasses import replace
 
-    events = [
-        event for rule in CONFIRMED_RULES[:3] for event in detect_events(groups, start, end, rule)
-    ]
-    for rule, parent_type in zip(
-        CONFIRMED_RULES[3:], ("hypo_episode_lt3p9", "level2_period_lt3p0")
-    ):
-        runs = detect_events(groups, start, end, EventRule(rule.event_type, rule.threshold, 120, 0))
-        for parent in list(events):
-            if parent["event_type"] != parent_type:
-                continue
-            children = [
-                r
-                for r in runs
-                if parent["event_start"] <= r["event_start"]
-                and r["event_end"] <= parent["event_end"]
-            ]
-            if not children:
-                continue
-            event = dict(parent)
-            event.update(
-                event_type=rule.event_type,
-                event_id=hashlib.sha256(
-                    (rule.event_type + str(parent["event_id"])).encode()
-                ).hexdigest()[:20],
-                parent_event_id=parent["event_id"],
-                continuous_low_segments_n=len(children),
-                continuous_low_segments_json=json.dumps(
-                    [
-                        {
-                            "start": r["event_start"].isoformat(),
-                            "end": r["event_end"].isoformat(),
-                            "duration_min": r["duration_min"],
-                        }
-                        for r in children
-                    ],
-                    ensure_ascii=False,
-                ),
-            )
-            events.append(event)
-    return events
+    return _scan(
+        groups, start, end, (replace(rule, parent_type=None),), night_start_hour, night_end_hour
+    )
+
+
+def confirmed_event_types(groups, start, end):
+    return _scan(groups, start, end, CONFIRMED_RULES)

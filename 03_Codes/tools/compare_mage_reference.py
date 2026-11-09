@@ -43,11 +43,11 @@ def main():
     result = subprocess.run(
         [
             str(args.rscript),
-            str(reference_script),
-            str(args.r_library),
-            str(input_path),
-            str(args.output / "reference.csv"),
-            str(args.output / "session.txt"),
+            reference_script.resolve().as_posix(),
+            args.r_library.resolve().as_posix(),
+            input_path.resolve().as_posix(),
+            (args.output / "reference.csv").resolve().as_posix(),
+            (args.output / "session.txt").resolve().as_posix(),
         ],
         capture_output=True,
         text=True,

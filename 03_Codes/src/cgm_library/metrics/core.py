@@ -33,10 +33,21 @@ def gri_from_percentages(
     }
 
 
-def pooled_metrics(values: np.ndarray | list[float]) -> dict[str, float | int | str | bool]:
+def pooled_metrics(
+    values: np.ndarray | list[float], support_minutes=None
+) -> dict[str, float | int | str | bool]:
     """单窗口五分钟有效点算术指标；覆盖门槛由调用方先判定。"""
     x = np.asarray(values, dtype=float)
-    x = x[np.isfinite(x)]
+    durations = (
+        np.full(x.shape, INTERVAL_MIN, dtype=float)
+        if support_minutes is None
+        else np.asarray(support_minutes, dtype=float)
+    )
+    if durations.shape != x.shape or not np.isfinite(durations).all() or (durations <= 0).any():
+        raise ValueError("每个读数需要一个对应的有限正支持时长")
+    finite = np.isfinite(x)
+    durations = durations[finite]
+    x = x[finite]
     if (x <= 0).any():
         raise ValueError("pooled_metrics 只能使用已清洗的有效正血糖值")
     numeric_keys = (
@@ -78,6 +89,7 @@ def pooled_metrics(values: np.ndarray | list[float]) -> dict[str, float | int | 
             **dict.fromkeys(numeric_keys, np.nan),
             "min_value_qc_flag": "NO_VALID_GLUCOSE",
             "risk_transform_domain_flag": False,
+            "risk_domain_invalid_n": 0,
         }
     mean = float(x.mean())
     sd = float(x.std(ddof=1)) if len(x) >= 2 else np.nan
@@ -94,7 +106,8 @@ def pooled_metrics(values: np.ndarray | list[float]) -> dict[str, float | int | 
         "LAGE": float(x.max() - x.min()),
         "global_min": float(x.min()),
         "min_value_qc_flag": "BELOW_1P8_VALID" if x.min() < 1.8 else "OK",
-        "valid_minutes": len(x) * INTERVAL_MIN,
+        "valid_minutes": float(durations.sum()),
+        "risk_domain_invalid_n": int((~risk_domain).sum()),
     }
     conditions = {
         "TIR": (x >= RANGES["hypo"]) & (x <= RANGES["upper"]),
@@ -108,9 +121,10 @@ def pooled_metrics(values: np.ndarray | list[float]) -> dict[str, float | int | 
         "time_7p8_10": (x > RANGES["tight_upper"]) & (x <= RANGES["upper"]),
     }
     for name, mask in conditions.items():
-        result[name + "_pct"] = float(mask.mean() * 100)
+        minutes = float(durations[mask].sum())
+        result[name + "_pct"] = minutes / result["valid_minutes"] * 100
         if name in ("TIR", "TAR", "TBR", "TITR"):
-            result[name + "_minutes"] = int(mask.sum()) * INTERVAL_MIN
+            result[name + "_minutes"] = minutes
     result.update(
         gri_from_percentages(
             result["TBR2_pct"], result["TBR1_pct"], result["TAR2_pct"], result["TAR1_pct"]

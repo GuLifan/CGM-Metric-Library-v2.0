@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from io import BytesIO
 from pathlib import Path
+from zipfile import BadZipFile
 
 import pandas as pd
+from xlrd.biffh import XLRDError
 
+from cgm_library.contracts.fields import check_request_columns
 from cgm_library.contracts.schema import CalculationError, RunConfig
-from cgm_library.io.pump_request import PUMP_PREFIX, parse_local_datetime, read_csv_strings
+from cgm_library.io.common import parse_local_datetime, read_csv_strings
+from cgm_library.io.pump_request import PUMP_PREFIX
 
 TIMEZONE = "Asia/Shanghai"
 
@@ -21,17 +27,15 @@ def parse_anchor(value: str, *, pump_start: bool = False) -> pd.Timestamp:
     return pd.Timestamp(naive).tz_localize(TIMEZONE)
 
 
-def read_request(path: Path) -> pd.DataFrame:
+def read_request(path: Path, *, content: bytes | None = None) -> pd.DataFrame:
     """前六列固定；第七列起原样保留并输出，不擅自丢弃比对字段。"""
     try:
-        headers, rows = read_csv_strings(path)
+        headers, rows = read_csv_strings(path, content=content)
     except ValueError as exc:
         raise CalculationError("ERROR03", str(exc), "batch") from exc
     if tuple(headers[:6]) != PUMP_PREFIX:
         raise CalculationError("ERROR03", "请求表前六列不符合泵时间新契约", "batch")
-    forbidden = {"request_row", "run_id", "patient_status", "window_name"}
-    if set(headers) & forbidden:
-        raise CalculationError("ERROR03", "请求表附加列与结果保留列冲突", "batch")
+    check_request_columns(headers)
     data = pd.DataFrame(rows, columns=headers)
     if "analysis_id" not in data:
         data["analysis_id"] = [f"request-{i + 1:04d}" for i in range(len(data))]
@@ -66,21 +70,41 @@ def locate_source(row: dict[str, str], config: RunConfig) -> tuple[Path, object]
     return existing[0], source
 
 
-def read_cgm(path: Path, source_unit: str) -> pd.DataFrame:
+def read_cgm(path: Path, source_unit: str, *, content: bytes | None = None) -> pd.DataFrame:
     """仅认已核查的设备列格式；原始时间、血糖字符串与源行号全部保留。"""
     if path.suffix.lower() == ".csv":
         try:
-            headers, rows = read_csv_strings(path)
+            headers, rows = read_csv_strings(path, content=content)
         except ValueError as exc:
             raise CalculationError("ERROR03", str(exc)) from exc
         source = pd.DataFrame(rows, columns=headers)
     elif path.suffix.lower() in (".xlsx", ".xls"):
-        source = pd.read_excel(path, dtype=str, keep_default_na=False)
+        try:
+            # header=None 保留真实重名表头，避免 pandas 自动改成 T.1 后失去证据。
+            book = pd.read_excel(
+                BytesIO(content if content is not None else path.read_bytes()),
+                header=None,
+                dtype=str,
+                keep_default_na=False,
+            )
+        except (ValueError, BadZipFile, XLRDError) as exc:
+            raise CalculationError("ERROR03", "无法解析 CGM Excel 工作簿") from exc
+        if book.empty:
+            raise CalculationError("ERROR03", "CGM 文件为空")
+        headers = list(book.iloc[0])
+        source = book.iloc[1:].reset_index(drop=True).copy()
+        source.columns = ["Unnamed: 0", "Unnamed: 1"] if headers == ["", ""] else headers
     else:
         raise CalculationError("ERROR03", "CGM 文件扩展名不受支持")
     if source.empty:
         raise CalculationError("ERROR03", "CGM 文件为空")
-    columns = {str(column).strip().lower(): column for column in source.columns}
+    aliases = defaultdict(list)
+    for col in source.columns:
+        aliases[str(col).strip().lower()].append(col)
+    collisions = [names for names in aliases.values() if len(names) > 1]
+    if collisions:
+        raise CalculationError("ERROR03", f"规范化后设备列名冲突：{collisions}")
+    columns = {key: names[0] for key, names in aliases.items()}
     if {"t", "v"} <= columns.keys():
         time_col, value_col = columns["t"], columns["v"]
     elif {"日期时间(时分秒)", "血糖值"} <= columns.keys():
@@ -106,6 +130,8 @@ def read_cgm(path: Path, source_unit: str) -> pd.DataFrame:
         for column in source.columns
         if str(column).strip().lower() in ("status", "device_status", "error", "错误码", "状态")
     ]
+    if len(state_columns) > 1:
+        raise CalculationError("ERROR03", f"设备状态列不唯一：{state_columns}")
     if state_columns:
         data["device_state"] = source[state_columns[0]].astype(str)
     return data

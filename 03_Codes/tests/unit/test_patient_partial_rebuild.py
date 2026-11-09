@@ -39,12 +39,14 @@ def test_patient_partial_starts_sparse_at_first_valid_raw_reading(tmp_path):
         ].iloc[0]
         >= 2
     )
-    assert (
-        result.window_rows.loc[
-            result.window_rows.window_name.eq("post7d"), "fasting_cv_reason"
-        ].iloc[0]
-        == "NOT_APPLICABLE_POST_DISCHARGE"
-    )
+    assert set(result.window_rows.window_name) == {
+        "all_record",
+        "inpatient",
+        "pre72h",
+        "pre24h",
+        "pump_d1",
+        "pump_d3",
+    }
     assert (
         result.window_rows.loc[
             result.window_rows.window_name.eq("inpatient"), "modd_matched_pairs_n"
@@ -71,3 +73,21 @@ def test_patient_partial_starts_sparse_at_first_valid_raw_reading(tmp_path):
     assert result.full7["delta_mean_pump_d3_d1"] == 0
     assert result.full7["day_p5_pre24h"] == 6
     assert result.full7["night_p5_pre24h"] == 6
+
+
+def test_all_record_fbs_includes_first_incomplete_sensor_morning(tmp_path):
+    times = pd.date_range("2026-01-01 05:55", periods=4, freq="5min")
+    pd.DataFrame({"t": times, "v": [4, 5, 7, 8]}).to_csv(tmp_path / "edge.csv", index=False)
+    request = {
+        "analysis_id": "S",
+        "入院日期": "2026-01-01",
+        "出院日期": "2026-01-02",
+        "设备文件名": "edge.csv",
+        "胰岛素泵开始时间": "",
+        "胰岛素泵停止时间": "",
+    }
+    result = calculate_patient_partial(request, RunConfig((SourceFolder(tmp_path, 5, "mmol/L"),)))
+    assert set(result.window_rows.window_name) == {"all_record", "inpatient", "pre72h", "pre24h"}
+    morning = result.fasting_day_rows.query('window_name == "all_record"').iloc[0]
+    assert morning.fasting_valid_points == 4
+    assert morning.fasting_cgm_0600 == 6

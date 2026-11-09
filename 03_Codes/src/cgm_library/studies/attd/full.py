@@ -22,6 +22,8 @@ def clock_period_p5(
         raise ValueError("日夜 P5 时段名称不合法")
     expected = 0
     valid = 0
+    valid_minutes = 0.0
+    window_minutes = 0.0
     values: list[float] = []
     for name, _, left, right in day_night_periods(start, end):
         if name != period:
@@ -29,9 +31,11 @@ def clock_period_p5(
         view, qc = window_view(groups, left, right, threshold_pct=0)
         expected += int(qc["expected_points"])
         valid += int(qc["valid_points"])
+        valid_minutes += qc["valid_minutes"]
+        window_minutes += qc["window_minutes"]
         values.extend(view.glucose_clean.dropna().to_numpy(float))
-    coverage = 100 * valid / expected if expected else np.nan
-    sufficient = expected > 0 and coverage >= coverage_min_pct
+    coverage = 100 * valid_minutes / window_minutes if window_minutes else np.nan
+    sufficient = valid > 0 and coverage >= coverage_min_pct
     return {
         "P5": float(np.quantile(values, 0.05, method="linear")) if sufficient else np.nan,
         "expected_points": expected,
@@ -77,7 +81,26 @@ def full7_features(
         period="night_00to06",
         coverage_min_pct=coverage_min_pct,
     )
+
+    def feature_reason(name, key):
+        if name not in by_name.index:
+            return "PUMP_START_MISSING" if name.startswith("pump_") else "WINDOW_UNAVAILABLE"
+        if np.isfinite(get(name, key)):
+            return ""
+        if not by_name.loc[name, "sufficient_flag"]:
+            return "COVERAGE_BELOW_THRESHOLD"
+        if key == "LBGI":
+            return "RISK_TRANSFORM_DOMAIN"
+        return "INSUFFICIENT_VALID_READINGS"
+
+    d1_reason = feature_reason("pump_d1", "MEAN")
+    d3_reason = feature_reason("pump_d3", "MEAN")
     return {
+        "mean_pump_d1_reason": d1_reason,
+        "delta_mean_pump_d3_d1_reason": d1_reason or d3_reason,
+        "mean_pre72h_reason": feature_reason("pre72h", "MEAN"),
+        "cv_pre72h_pct_reason": feature_reason("pre72h", "CV_pct"),
+        "lbgi_pre72h_reason": feature_reason("pre72h", "LBGI"),
         "mean_pump_d1": d1,
         "mean_pump_d3_qc": d3,
         "delta_mean_pump_d3_d1": d3 - d1 if np.isfinite(d1) and np.isfinite(d3) else np.nan,

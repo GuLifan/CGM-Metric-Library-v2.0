@@ -127,3 +127,45 @@ def test_unknown_device_reading_stops_file(value, state):
     with pytest.raises(CalculationError) as caught:
         clean_observations(raw)
     assert caught.value.code == "ERROR06"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "values,states,expected,source_row,conflict",
+    [
+        (["", "6"], ["", ""], 6, 3, False),
+        (["9", "6"], ["error", ""], 6, 3, False),
+        (["6", "6.0"], ["", ""], 6, 2, False),
+        (["0", None, "7"], ["", "", "invalid"], None, 2, False),
+        (["5", "6", "9"], ["", "", "error"], None, 2, True),
+    ],
+)
+def test_same_timestamp_uses_distinct_clean_values(
+    values, states, expected, source_row, conflict, reverse
+):
+    raw = pd.DataFrame(
+        {
+            "raw_time": ["2026-01-01 06:30"] * len(values) + ["2026-01-01 06:31"],
+            "glucose_raw": [*values, "8"],
+            "device_state": [*states, ""],
+            "source_row": range(2, len(values) + 3),
+        }
+    )
+    evidence, obs, qc = clean_observations(raw.iloc[::-1] if reverse else raw)
+    rows = evidence[evidence.raw_time.eq("2026-01-01 06:30")]
+    assert len(obs) == 2 and len(rows) == len(values)
+    assert obs.iloc[0].source_row == source_row
+    assert obs.is_representative.all()
+    assert rows.loc[rows.is_representative, "source_row"].tolist() == [source_row]
+    assert qc["duplicate_count"] == len(values) - 1
+    assert qc["duplicate_conflict_count"] == int(conflict)
+    assert rows.duplicate_conflict_flag.eq(conflict).all()
+    assert (
+        rows.loc[rows.device_state.isin(["error", "invalid"]), "raw_qc_reason"]
+        .eq("DEVICE_INVALID")
+        .all()
+    )
+    if expected is None:
+        assert pd.isna(obs.iloc[0].glucose_clean)
+    else:
+        assert obs.iloc[0].glucose_clean == expected
