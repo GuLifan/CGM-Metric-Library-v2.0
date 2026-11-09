@@ -1,45 +1,82 @@
 # CGM Metric Library v2.0.0
 
-面向连续血糖监测数据的 Python 计算库。独立新工程创建于2026-11-04。
-远程仓库：https://github.com/GuLifan/CGM-Metric-Library-v2.0
+连续血糖监测（CGM）研究计算库 · Research software for continuous glucose monitoring  
+**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261109` (2026-11-09)
 
-## 当前可用范围
+## 项目沿革 / Project history
 
-支持文件读取/QC、五分钟时间轴、窗口与日夜覆盖、连续指标、低/高血糖事件、延长事件及内部连续低值段、条件低血糖分层、ADRR完整日敏感性、FBS、Sparse20→Sparse5、Full7以及逐患者继续的批次输出。
-MAGE候选实现使用全窗口SD；正式MAGE字段保持NA，直到R参考差异得到核对和验收。新工程不是已完成临床验收的发布版。具体测试证据见[验收状态](04_Manuals/VALIDATION.md)。
+| 阶段 / Stage | 中文 | English |
+|---|---|---|
+| 2026-07 至 09 · DRQ | 早期工程以请求清单驱动多个独立脚本。分组结果按全记录、住院期、出院前等窗口导出，专项脚本另算出院前 72 小时指标和前 24 小时昼夜分位数。旧表的 CV 和范围占比常以 0–1 比例保存。 | The DRQ scripts processed request lists and produced separate files by window. A dedicated pipeline calculated pre-discharge features. Legacy CV and range fractions often used a 0–1 scale. |
+| 2026-10 · v2.0 | 将窗口指标、事件、覆盖率、稀疏取点与患者摘要拆成机器可读表。10 月 1 日的宽表衍生出五张中文分类 Excel；10 月 2 日另有修订计算归档。复核时需要记录具体归档。 | v2.0 separated window metrics, events, coverage, sparse samples and patient summaries. The five-sheet classified workbook came from the October 1 wide table. The October 2 corrected calculations are a separate snapshot. |
+| 2026-11-04 · v2.0.0 | 建立独立的 Python/uv 工程，将输入、时间轴、事件、窗口和输出规则写入版本化规范。固定合成测试、逐患者错误记录和资产哈希。正式 MAGE 等待参考验收。 | The independent Python/uv project introduced versioned contracts, synthetic tests, per-patient outcomes and file hashes. Formal MAGE remains pending reference validation. |
+| 2026-11-09 · 计算订正 | 同时刻重复值先按有效候选处理。五分钟槽按组首归窗，有效支持时长裁至窗末。标称一分钟来源的过满槽记录为患者级错误。 | Duplicate timestamps are resolved using valid readings. Slot starts determine window membership and support is clipped at the window end. Overfull slots in nominal one-minute data produce patient-level errors. |
+| 261109 · 表格订正 | 计算使用原精度，导出小数按十进制四舍五入至四位。Excel 表头、标签和数值统一为 Times New Roman。首个有效读数已达或晚于出院的请求记 ERROR04，继续下一例。 | Calculations retain working precision. Decimal results use four-place half-up rounding at export. Excel headers, labels and values use Times New Roman. A first valid reading at or after discharge produces a patient-level ERROR04. |
 
-## 最短安装与验证
+## 部署 / Deployment
 
-```powershell
-cd "D:\LifanDataAgent\CGM Metric Library v2.0.0\03_Codes"
+在可读取原始设备文件的工作站或服务器安装 Git 和 uv。本项目要求 Python 3.14.7 至 3.14.x。使用仓库的锁文件建立独立环境。常规批次仅需 Python，R 仅用于独立的 MAGE 参考复核。
+
+Install Git and uv on the workstation or server that holds the original device files. The supported Python range is 3.14.7 to the end of 3.14.x. The lock file pins dependencies. Routine batches use Python. R is needed only to reproduce the separate MAGE reference comparison.
+
+```sh
+git clone https://github.com/GuLifan/CGM-Metric-Library-v2.0.git
+cd CGM-Metric-Library-v2.0/03_Codes
+uv python install 3.14.7
 uv sync --frozen --python 3.14.7
-uv run pytest -q
-uv run ruff check src tests tools
-uv run cgm-library --help
-uv run python tools/run_synthetic_pilot.py --run-id demo_001
+uv run --frozen cgm-library --version
+uv run --frozen pytest -q
+uv run --frozen ruff check src tests tools
+uv run --frozen ruff format --check src tests tools
+uv run --frozen python tools/run_synthetic_pilot.py --run-id demo_261109
 ```
 
-日常无需安装到全局Python。依赖以uv.lock锁定；requirements.txt只用于兼容其他安装工具，由锁文件导出。
+上述命令适用于 PowerShell 及常见 POSIX shell。后续命令均从 `03_Codes` 执行。合成示范写入 `../_Outputs/demo_261109`。重复运行请选择新批次名。Excel 客户端安装 Times New Roman 可按指定字体显示，缺失字形的显示由客户端字体回退决定。
 
-## 运行真实批次前
+The commands work in PowerShell and common POSIX shells. Run the following commands from `03_Codes`. The synthetic pilot writes to `../_Outputs/demo_261109`. Choose a fresh run ID for every execution. Install Times New Roman on the viewing system for the intended appearance. The viewer controls fallback for missing glyphs.
 
-将configs/example.yaml复制成configs/site.local.yaml，填写原始无后缀目录、单位、采样频率和批次日期边界。此配置及真实输入不提交。请求前六列严格为：
-住院号、出院日期、入院日期、设备文件名、胰岛素泵开始时间、胰岛素泵停止时间。
-其后附加列保留；缺analysis_id时自动生成本批顺序ID。
+### 配置与输入 / Configure sources and requests
 
-```powershell
-uv run cgm-library run --request "本地请求表.csv" --config configs/site.local.yaml --output-root ../_Outputs --run-id local_001 --accept-partial
+1. 将 `configs/example.yaml` 复制为 `configs/site.local.yaml`。每项来源填写原始目录、标称采样间隔（1 或 5 分钟）和单位（`mmol/L` 或 `mg/dL`）。目录相对配置文件解析。  
+   Copy `configs/example.yaml` to `configs/site.local.yaml`. For each original source, set its directory, nominal interval (1 or 5 minutes) and unit. Relative paths resolve against the configuration file.
+2. 每例的出院自然日必须落入唯一来源区间。起日包含、止日排除；时间按亚洲上海时区解释。设备文件名须能唯一匹配原始 CSV、XLSX 或 XLS。  
+   Each discharge date must select exactly one source. Date ranges include their start and exclude their end. Times are interpreted in Asia/Shanghai. The device filename must identify one original CSV, XLSX or XLS file.
+3. 准备本地 CSV 请求清单。前六列按下行顺序填写；住院号保留前导零。可追加唯一的 `analysis_id` 及研究字段。缺少 `analysis_id` 时按请求顺序分配。  
+   Prepare a local request CSV with the six literal headers below in this order. Preserve leading zeros in hospital IDs. A unique `analysis_id` and additional study fields may follow. If omitted, analysis IDs are assigned in request order.
+
+```csv
+住院号,出院日期,入院日期,设备文件名,胰岛素泵开始时间,胰岛素泵停止时间
 ```
 
-根目录也可执行 `python start.py --help`。同一run_id禁止覆盖。每次输出配置、环境、QC、结果长表、逐患者状态及SHA-256清单；部分成功不会标成正式整批成功。
+### 运行与核验 / Run and verify
 
-## 文档入口
+```sh
+uv run --frozen cgm-library run --request ../_RequestList/request.csv --config configs/site.local.yaml --output-root ../_Outputs --run-id CML2204_261109 --accept-partial
+uv run --frozen python tools/validate_outputs.py ../_Outputs/CML2204_261109
+```
 
-- [_SPEC/CONSTITUTION.md](_SPEC/CONSTITUTION.md)：治理与生效规则。
-- [_SPEC/METRIC_CONTRACT.md](_SPEC/METRIC_CONTRACT.md)：指标定义、输入输出。
-- [_SPEC/DATA_FLOW.md](_SPEC/DATA_FLOW.md)：计算及异常流程。
-- [_SPEC/ARCHITECTURE.md](_SPEC/ARCHITECTURE.md)：目录与模块职责。
-- [最新会议裁定](_SPEC/DECISIONS_20261104.md)：M01—M07。
-- [用户操作](04_Manuals/USER_GUIDE.md)、[字段说明](04_Manuals/DATA_DICTIONARY.md)、[开发维护](CONTRIBUTING.md)、[发布检查](04_Manuals/RELEASE.md)。
+`--accept-partial` 表示接受尚有 MAGE 参考验收项的研究输出。退出码 0 也可能包含患者级失败，请查终态和逐例日志。CLI 在全部患者失败时返回 1；配置、参数或批次名错误需查终端提示。更正输入后使用新 run ID 复算。库可在本地运行，无需数据库服务。
 
-原始资料默认通过配置引用旧目录，无患者数据复制进本工程。旧算法的迁入不等于旧验收状态继承。未指定开源许可证，公开仓库不自动授予第三方再分发许可。
+`--accept-partial` acknowledges the outstanding MAGE reference gate. Exit code 0 can include patient-level failures. Inspect the terminal state and per-patient log. The CLI returns 1 when every patient fails. Configuration, argument and run-ID errors are reported in the terminal. Use a new run ID after correcting inputs. The batch runs locally without a database service.
+
+| 输出 / Output | 用途 / Use |
+|---|---|
+| `<run_id>_patient_summary.xlsx` | 查患者状态、未计算病例、窗口指标、Full7 和 Sparse5。Excel 使用数值单元格，保留文本标识。 / Review outcomes, failed cases, window metrics and ATTD features. Values are numeric cells and identifiers retain their text type. |
+| `metric_outputs/` | 窗口、昼夜、事件与 ATTD 长表。百分数字段以 0–100 表示。 / Window, day/night, event and ATTD tables. Percentage fields use a 0–100 scale. |
+| `qc_and_coverage/`、`logs/patient_status.csv` | 追查覆盖率、原始异常、五分钟时间轴和逐例失败原因。 / Trace coverage, raw anomalies, five-minute timelines and patient-level failures. |
+| `manifest.json`、`manifest.sha256`、`run_state.json` | 核对批次状态、输入/输出与源码摘要、资产完整性。 / Verify terminal state, input/output and source hashes, and artifact integrity. |
+
+CSV 采用 UTF-8 BOM，保存数值和文本。字体由 Excel 工作簿记录。整数计数保留整数，缺失留空，零保留为零。精确阈值、MAGE 候选计算及事件判定均在导出前执行。需要高于四位精度的二次分析时，请从原始输入和同一版本的计算库取值。
+
+CSV uses UTF-8 with BOM and carries values and text. Font metadata lives in the Excel workbook. Integer counts remain integers, missing cells remain blank, and observed zeros are retained. Threshold decisions, candidate MAGE and event detection precede export rounding. For analyses requiring more precision, use the original inputs and the same version of the calculation library.
+
+## 规范、验收及维护 / Specifications, validation and maintenance
+
+- 指标定义与变更裁定 / Metric contract and dated decisions: [Metric contract](_SPEC/METRIC_CONTRACT.md) · [2026-11-04](_SPEC/DECISIONS_20261104.md) · [2026-11-09](_SPEC/DECISIONS_20261109.md).
+- 操作与字段 / Operations and fields: [User guide](04_Manuals/USER_GUIDE.md) · [Data dictionary](04_Manuals/DATA_DICTIONARY.md).
+- 验收与参考 / Acceptance and reference: [Validation](04_Manuals/VALIDATION.md) · [MAGE review](04_Manuals/MAGE_REFERENCE_REVIEW.md). 正式 `MAGE` 目前留空；研究候选见 `MAGE_candidate_mmol_L`。 / The formal MAGE field is blank pending acceptance. The candidate field is available for research review.
+- 开发与发布 / Development and releases: [Contributing](CONTRIBUTING.md) · [Release checklist](04_Manuals/RELEASE.md) · [Changelog](CHANGELOG.md).
+
+真实设备文件、请求清单、患者结果及本地路径配置保留在授权环境。仓库发布代码、规范和合成测试。项目当前未指定开源许可证。
+
+Keep original device files, requests, patient results and site configuration in the authorized environment. The repository distributes code, specifications and synthetic tests. No open-source license has been specified.

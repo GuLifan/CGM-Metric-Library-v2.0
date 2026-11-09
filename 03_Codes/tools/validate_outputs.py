@@ -49,13 +49,22 @@ def validate(root: Path) -> None:
     if not metrics.empty:
         if (metrics.valid_points > metrics.expected_points).any():
             raise ValueError("有效点超过理论点")
-        if "window_minutes" in metrics and not np.allclose(
-            metrics.coverage_pct, 100 * metrics.valid_minutes / metrics.window_minutes
-        ):
-            raise ValueError("有效支持时长与窗口覆盖不一致")
+        # Compare intervals allowing half a published unit per independently rounded column.
+        places = manifest.get("table_decimal_places")
+        half = 0.5 * 10**-places if places is not None else 0
+        if "window_minutes" in metrics:
+            residual = (
+                metrics.coverage_pct * metrics.window_minutes - 100 * metrics.valid_minutes
+            ).abs()
+            bound = half * (metrics.window_minutes.abs() + metrics.coverage_pct.abs() + 100 + half)
+            if not (residual <= bound + 1e-7).all():
+                raise ValueError("有效支持时长与窗口覆盖不一致")
         valid = metrics[["TIR_minutes", "TAR_minutes", "TBR_minutes", "valid_minutes"]].dropna()
         if not np.allclose(
-            valid.TIR_minutes + valid.TAR_minutes + valid.TBR_minutes, valid.valid_minutes
+            valid.TIR_minutes + valid.TAR_minutes + valid.TBR_minutes,
+            valid.valid_minutes,
+            rtol=0,
+            atol=4 * half + 1e-7,
         ):
             raise ValueError("TIR/TAR/TBR分钟分区不一致")
     sparse = pd.read_csv(root / "metric_outputs/attd_sparse20_targets.csv")

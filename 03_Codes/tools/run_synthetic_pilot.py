@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from cgm_library.io.tables import four_places
 from cgm_library.sampling.fixed_clock import extract_sparse20
 from cgm_library.studies.attd.sparse import sparse_features
 from cgm_library.timeline.groups import make_groups
@@ -65,14 +66,21 @@ def run_pilot(output_root: Path, run_id: str) -> Path:
         [np.nan, np.nan, np.nan, np.nan, 6.4, np.nan, 6.8],
     )
     minute_groups = make_groups(collision_raw, 1)
-    minute_groups.to_csv(qc_dir / "minute_groups.csv", index=False, encoding="utf-8-sig")
+    minute_groups.to_csv(
+        qc_dir / "minute_groups.csv", index=False, encoding="utf-8-sig", float_format=four_places
+    )
     slot_start = pd.Timestamp("2026-01-01 12:50", tz="Asia/Shanghai")
     _, minute_qc = window_view(minute_groups, slot_start, slot_start + pd.Timedelta(minutes=10))
     if (minute_qc["expected_points"], minute_qc["valid_points"]) != (2, 2):
         raise AssertionError("分钟来源归槽回归案例未通过")
     five_raw = _raw(["2026-01-01 08:00:31", "2026-01-01 08:04:51"], [6.1, 6.4])
     five_groups = make_groups(five_raw, 5)
-    five_groups.to_csv(qc_dir / "five_min_collision_groups.csv", index=False, encoding="utf-8-sig")
+    five_groups.to_csv(
+        qc_dir / "five_min_collision_groups.csv",
+        index=False,
+        encoding="utf-8-sig",
+        float_format=four_places,
+    )
     if not five_groups.slot_conflict_flag.iloc[0] or pd.notna(five_groups.glucose_clean.iloc[0]):
         raise AssertionError("原始五分钟同槽多值未置 NA")
     night_start = pd.Timestamp("2026-01-02 03:00", tz="Asia/Shanghai")
@@ -95,17 +103,23 @@ def run_pilot(output_root: Path, run_id: str) -> Path:
     ):
         raise AssertionError("已确认的夜间连续指标与 15 分钟事件案例未通过")
     pd.DataFrame([{"synthetic_case": "truncated_night_level2", **night_metrics}]).to_csv(
-        metrics_dir / "confirmed_night_metrics.csv", index=False, encoding="utf-8-sig"
+        metrics_dir / "confirmed_night_metrics.csv",
+        index=False,
+        encoding="utf-8-sig",
+        float_format=four_places,
     )
     pd.DataFrame(night_events).to_csv(
-        metrics_dir / "confirmed_night_events.csv", index=False, encoding="utf-8-sig"
+        metrics_dir / "confirmed_night_events.csv",
+        index=False,
+        encoding="utf-8-sig",
+        float_format=four_places,
     )
     pd.DataFrame(
         [
             {"synthetic_case": "minute_source_group_start", **minute_qc},
             {"synthetic_case": "truncated_night_03to06", **night_qc},
         ]
-    ).to_csv(qc_dir / "coverage.csv", index=False, encoding="utf-8-sig")
+    ).to_csv(qc_dir / "coverage.csv", index=False, encoding="utf-8-sig", float_format=four_places)
     # 独立原始支线：五天逐分钟合成值产生 20 个固定时点原始候选。
     cgm_start = pd.Timestamp("2026-01-01 08:00", tz="Asia/Shanghai")
     discharge = cgm_start + pd.Timedelta(days=5)
@@ -115,10 +129,17 @@ def run_pilot(output_root: Path, run_id: str) -> Path:
     sparse5 = sparse_features(targets)
     if len(targets) != 20 or targets.glucose.notna().sum() != 20:
         raise AssertionError("Sparse20 完整性案例未通过")
-    targets.to_csv(qc_dir / "sparse20_targets.csv", index=False, encoding="utf-8-sig")
-    candidates.to_csv(qc_dir / "sparse20_candidates.csv", index=False, encoding="utf-8-sig")
+    targets.to_csv(
+        qc_dir / "sparse20_targets.csv", index=False, encoding="utf-8-sig", float_format=four_places
+    )
+    candidates.to_csv(
+        qc_dir / "sparse20_candidates.csv",
+        index=False,
+        encoding="utf-8-sig",
+        float_format=four_places,
+    )
     pd.DataFrame([{"synthetic_case": "constant_raw_glucose", **sparse5}]).to_csv(
-        metrics_dir / "sparse5.csv", index=False, encoding="utf-8-sig"
+        metrics_dir / "sparse5.csv", index=False, encoding="utf-8-sig", float_format=four_places
     )
     config = {
         "synthetic_only": True,

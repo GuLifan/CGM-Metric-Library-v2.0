@@ -18,6 +18,7 @@ import pandas as pd
 from cgm_library.contracts.fields import ASSETS, SCHEMA_VERSION, Asset
 from cgm_library.contracts.schema import CalculationError, load_config
 from cgm_library.io.reader import read_request
+from cgm_library.io.tables import write_csv, write_workbook
 from cgm_library.qc.raw import RawEvidenceError, raw_interval_distribution
 from cgm_library.timeline.groups import TimelineError
 from cgm_library.workflows.patient import calculate_patient_partial
@@ -88,7 +89,7 @@ def _csv(path: Path, frames: list[pd.DataFrame], asset: Asset, request_columns) 
         if name.endswith(("_n", "_any")):
             table[name] = table[name].astype("Int64")
     temporary = path.with_suffix(".csv.tmp")
-    table.to_csv(temporary, index=False, encoding="utf-8-sig")
+    write_csv(table, temporary)
     temporary.replace(path)
 
 
@@ -221,12 +222,33 @@ def _execute(output, config, config_bytes, request, request_bytes, statuses, sta
         # 来源组行号是重跑证据；分患者保存避免把所有时间轴堆成超宽表。
         timeline_path = timeline_dir / f"request_{request_index:04d}.csv"
         temporary = timeline_path.with_suffix(".csv.tmp")
-        result.groups.to_csv(temporary, index=False, encoding="utf-8-sig")
+        write_csv(result.groups, temporary)
         temporary.replace(timeline_path)
     status = pd.DataFrame(statuses)
     collected["status"] = [status]
     for key, asset in ASSETS.items():
         _csv(output / asset.path, collected[key], asset, request.columns)
+    sheets = [
+        (
+            "说明",
+            pd.DataFrame(
+                [
+                    ("批次", state["run_id"]),
+                    ("请求数", len(status)),
+                    ("精度", "数值结果四舍五入至四位小数；空白表示缺失。"),
+                    ("MAGE", "正式字段待参考验收，候选值见窗口表。"),
+                ],
+                columns=["项目", "内容"],
+            ),
+        ),
+        ("患者总览", status),
+        ("未计算病例", status.loc[status.computation_status.ne("COMPUTED")]),
+    ]
+    for key, title in [("window", "窗口指标"), ("full7", "Full7"), ("sparse5", "Sparse5")]:
+        columns = ASSETS[key].columns(request.columns)
+        frame = pd.concat(collected[key], ignore_index=True) if collected[key] else pd.DataFrame()
+        sheets.append((title, frame.reindex(columns=columns)))
+    write_workbook(output / f"{state['run_id']}_patient_summary.xlsx", sheets)
     counts = Counter(status.patient_status)
     errors = counts.get("ERROR", 0)
     outcome = (
@@ -238,6 +260,7 @@ def _execute(output, config, config_bytes, request, request_bytes, statuses, sta
     manifest = {
         "run_id": state["run_id"],
         "schema_version": SCHEMA_VERSION,
+        "table_decimal_places": 4,
         "created_at_beijing": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
         "status": outcome,
         "formal_release": False,
