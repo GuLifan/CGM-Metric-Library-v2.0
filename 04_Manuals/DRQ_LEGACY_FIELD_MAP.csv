@@ -1,0 +1,116 @@
+old_column,v2_0_0_field,definition
+住院号,住院号,v2.0.0 contract
+计算模式,file/window name,v2.0.0 contract
+匹配文件名,设备文件名,v2.0.0 contract
+数据文件夹,audit/source configuration,v2.0.0 contract
+出院日期,出院日期,v2.0.0 contract
+入院日期,入院日期,v2.0.0 contract
+计算窗口起始,window_start,v2.0.0 contract
+计算窗口结束,window_end,v2.0.0 contract
+_status,patient_status.csv,v2.0.0 contract
+MEAN,MEAN,v2.0.0 contract
+SD,SD,v2.0.0 contract
+CV,CV_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+GMI,GMI,v2.0.0 contract
+LBGI,LBGI,v2.0.0 contract
+HBGI,HBGI,v2.0.0 contract
+ADRR,ADRR + ADRR_complete_days,v2.0.0 contract
+MODD,MODD_mmol_L,Group: exact 24h pairs within window; daily previous-day comparison separately named
+LAGE,LAGE,v2.0.0 contract
+MAGE,MAGE + MAGE_candidate_mmol_L,Formal reference-gated field and research candidate
+TIR,TIR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TIR-0TO6AM,night_00to06__TIR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TIR-6AMTO0,day_06to24__TIR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR,TAR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR-0TO6AM,night_00to06__TAR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR-6AMTO0,day_06to24__TAR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR,TBR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR-0TO6AM,night_00to06__TBR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR-6AMTO0,day_06to24__TBR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR1,TAR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR1-0TO6AM,night_00to06__TAR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR1-6AMTO0,day_06to24__TAR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR2,TAR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR2-0TO6AM,night_00to06__TAR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TAR2-6AMTO0,day_06to24__TAR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR1,TBR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR1-0TO6AM,night_00to06__TBR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR1-6AMTO0,day_06to24__TBR1_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR2,TBR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR2-0TO6AM,night_00to06__TBR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TBR2-6AMTO0,day_06to24__TBR2_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TITR,TITR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TITR-0TO6AM,night_00to06__TITR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TITR-6AMTO0,day_06to24__TITR_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+GRI,GRI + GRI_raw,Percentages 0-100; durations and coverage follow supported slot minutes
+GRI-0TO6AM,night_00to06__GRI + night_00to06__GRI_raw,Percentages 0-100; durations and coverage follow supported slot minutes
+GRI-6AMTO0,day_06to24__GRI + day_06to24__GRI_raw,Percentages 0-100; durations and coverage follow supported slot minutes
+TIR-TITR,time_7p8_10_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TIR-TITR-0TO6AM,night_00to06__time_7p8_10_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+TIR-TITR-6AMTO0,day_06to24__time_7p8_10_pct,Percentages 0-100; durations and coverage follow supported slot minutes
+MEAN-0TO6AM,night_00to06__MEAN,v2.0.0 contract
+SD-0TO6AM,night_00to06__SD,v2.0.0 contract
+CV-0TO6AM,night_00to06__CV_pct,v2.0.0 contract
+MEAN-6AMTO0,day_06to24__MEAN,v2.0.0 contract
+SD-6AMTO0,day_06to24__SD,v2.0.0 contract
+CV-6AMTO0,day_06to24__CV_pct,v2.0.0 contract
+VV-0TO6AM,night_00to06__nadirs_json,v2.0.0 contract
+VVtime-0TO6AM,night_00to06__nadirs_json,v2.0.0 contract
+FBS-CV,fasting_cgm_0600_cv_pct,"Hospitalized 05:45-06:15 median, >=4 of 6 slots; >=2 valid mornings"
+HYPO,hypo_episode_lt3p9_n,v2.0.0 contract
+Time-HYPO,hypo_episode_lt3p9_events_json,v2.0.0 contract
+HYPO 0TO6AM,night_00to06__hypo_episode_lt3p9_n,v2.0.0 contract
+Time-HYPO 0TO6AM,night_00to06__hypo_episode_lt3p9_events_json,v2.0.0 contract
+EX HYPO,extended_hypo_lt3p9_120_n,v2.0.0 contract
+Time-EX HYPO,extended_hypo_lt3p9_120_events_json,v2.0.0 contract
+EX HYPO 0TO6AM,night_00to06__extended_hypo_lt3p9_120_n,v2.0.0 contract
+Time-EX HYPO 0TO6AM,night_00to06__extended_hypo_lt3p9_120_events_json,v2.0.0 contract
+EX HYPER,prolonged_hyper_gt13p9_120_n,v2.0.0 contract
+Time-EX HYPER,prolonged_hyper_gt13p9_120_events_json,v2.0.0 contract
+LV2 HYPO,level2_period_lt3p0_n,v2.0.0 contract
+Time-LV2 HYPO,level2_period_lt3p0_events_json,v2.0.0 contract
+LV2 HYPO 0TO6AM,night_00to06__level2_period_lt3p0_n,v2.0.0 contract
+Time-LV2 HYPO 0TO6AM,night_00to06__level2_period_lt3p0_events_json,v2.0.0 contract
+HYPO_COND_3.0,hypo_cond_lt3p0_n,v2.0.0 contract
+Time-HYPO_COND_3.0,hypo_cond_lt3p0_events_json,v2.0.0 contract
+HYPO_COND_3.1,hypo_cond_lt3p1_n,v2.0.0 contract
+Time-HYPO_COND_3.1,hypo_cond_lt3p1_events_json,v2.0.0 contract
+HYPO_COND_3.2,hypo_cond_lt3p2_n,v2.0.0 contract
+Time-HYPO_COND_3.2,hypo_cond_lt3p2_events_json,v2.0.0 contract
+HYPO_COND_3.3,hypo_cond_lt3p3_n,v2.0.0 contract
+Time-HYPO_COND_3.3,hypo_cond_lt3p3_events_json,v2.0.0 contract
+HYPO_COND_3.4,hypo_cond_lt3p4_n,v2.0.0 contract
+Time-HYPO_COND_3.4,hypo_cond_lt3p4_events_json,v2.0.0 contract
+HYPO_COND_3.5,hypo_cond_lt3p5_n,v2.0.0 contract
+Time-HYPO_COND_3.5,hypo_cond_lt3p5_events_json,v2.0.0 contract
+HYPO_COND_3.6,hypo_cond_lt3p6_n,v2.0.0 contract
+Time-HYPO_COND_3.6,hypo_cond_lt3p6_events_json,v2.0.0 contract
+HYPO_COND_3.7,hypo_cond_lt3p7_n,v2.0.0 contract
+Time-HYPO_COND_3.7,hypo_cond_lt3p7_events_json,v2.0.0 contract
+HYPO_COND_3.8,hypo_cond_lt3p8_n,v2.0.0 contract
+Time-HYPO_COND_3.8,hypo_cond_lt3p8_events_json,v2.0.0 contract
+global_min,global_min,v2.0.0 contract
+P5,P5,v2.0.0 contract
+P25,P25,v2.0.0 contract
+P50,P50,v2.0.0 contract
+P75,P75,v2.0.0 contract
+P95,P95,v2.0.0 contract
+低血糖点数量,below_1p8_valid_raw_n,v2.0.0 contract
+低血糖最低值,below_1p8_valid_raw_min,v2.0.0 contract
+胰岛素泵开始时间,胰岛素泵开始时间,v2.0.0 contract
+实际计算的结束时间,window_end,v2.0.0 contract
+FBS: Day 1,cgm_d1__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 2,cgm_d2__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 3,cgm_d3__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 4,cgm_d4__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 5,cgm_d5__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 6,cgm_d6__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 7,cgm_d7__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 8,cgm_d8__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 9,cgm_d9__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 10,cgm_d10__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 11,cgm_d11__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 12,cgm_d12__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 13,cgm_d13__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+FBS: Day 14,cgm_d14__fasting_cgm_0600,Complete hospitalized 05:45-06:15 within this CGM day; median of at least 4/6 valid slots
+Daily: MODD,MODD_mmol_L + MODD_vs_previous_cgm_day_mmol_L,Within-window field is retained; separately named prior-CGM-day exact 24h pairs require both days qualified

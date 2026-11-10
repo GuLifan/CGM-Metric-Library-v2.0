@@ -1,7 +1,7 @@
 # CGM Metric Library v2.0.0
 
 连续血糖监测（CGM）研究计算库 · Research software for continuous glucose monitoring  
-**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261109` (2026-11-09)
+**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261110` (2026-11-10)
 
 ## 项目沿革 / Project history
 
@@ -14,6 +14,10 @@
 | 261109 · 表格订正 | 计算使用原精度，导出小数按十进制四舍五入至四位。Excel 表头、标签和数值统一为 Times New Roman。首个有效读数已达或晚于出院的请求记 ERROR04，继续下一例。 | Calculations retain working precision. Decimal results use four-place half-up rounding at export. Excel headers, labels and values use Times New Roman. A first valid reading at or after discharge produces a patient-level ERROR04. |
 
 ## 部署 / Deployment
+
+261110 增加经批准的 DRQ 15 表输出、Mode7 胰岛素泵期间窗口，以及完整结果包的可还原单 CSV。操作详见下方 DRQ 交付指南。
+
+Revision 261110 adds the approved 15-file DRQ suite, Mode7 insulin pump treatment window, and a reversible single-CSV result archive. The linked DRQ guide documents these commands and definitions.
 
 在可读取原始设备文件的工作站或服务器安装 Git 和 uv。本项目要求 Python 3.14.7 至 3.14.x。使用仓库的锁文件建立独立环境。常规批次仅需 Python，R 仅用于独立的 MAGE 参考复核。
 
@@ -71,6 +75,10 @@ CSV 采用 UTF-8 BOM，保存数值和文本。字体由 Excel 工作簿记录�
 CSV uses UTF-8 with BOM and carries values and text. Font metadata lives in the Excel workbook. Integer counts remain integers, missing cells remain blank, and observed zeros are retained. Threshold decisions, candidate MAGE and event detection precede export rounding. For analyses requiring more precision, use the original inputs and the same version of the calculation library.
 
 ## 规范、验收及维护 / Specifications, validation and maintenance
+
+DRQ 全套15表、Mode7泵期间和完整结果包单CSV的运行、字段及还原方法见 [DRQ交付指南](04_Manuals/DRQ_DELIVERY.md)。
+
+See the DRQ delivery guide for the 15-file suite, Mode7 pump period, and reversible single-CSV export of a complete result archive.
 
 - 指标定义与变更裁定 / Metric contract and dated decisions: [Metric contract](_SPEC/METRIC_CONTRACT.md) · [2026-11-04](_SPEC/DECISIONS_20261104.md) · [2026-11-09](_SPEC/DECISIONS_20261109.md).
 - 操作与字段 / Operations and fields: [User guide](04_Manuals/USER_GUIDE.md) · [Data dictionary](04_Manuals/DATA_DICTIONARY.md).

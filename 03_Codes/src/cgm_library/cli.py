@@ -22,11 +22,47 @@ def main() -> int:
     batch.add_argument(
         "--accept-partial", action="store_true", help="接受MAGE参考未验收的研究性输出"
     )
+    drq = commands.add_parser("drq", help="生成DRQ系列15个研究结果表")
+    drq.add_argument("--request", type=Path, required=True)
+    drq.add_argument("--config", type=Path, required=True)
+    drq.add_argument("--output-root", type=Path, required=True)
+    drq.add_argument("--run-id", required=True)
+    drq.add_argument("--workers", type=int, default=4)
+    drq.add_argument("--resume", action="store_true")
+    drq.add_argument("--accept-partial", action="store_true")
+    compact = commands.add_parser("collapse", help="将结果ZIP无损浓缩到一张患者CSV")
+    compact.add_argument("--archive", type=Path, required=True)
+    compact.add_argument("--flat-results", type=Path, required=True)
+    compact.add_argument("--output", type=Path, required=True)
+    restore = commands.add_parser("restore", help="从浓缩CSV还原全部原始结果文件并校验")
+    restore.add_argument("--table", type=Path, required=True)
+    restore.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.command in ("collapse", "restore"):
+        from cgm_library.io.archive import collapse_results, restore_results
+
+        if args.command == "collapse":
+            output = collapse_results(args.archive, args.flat_results, args.output)
+        else:
+            output = restore_results(args.table, args.output)
+        print(output)
+        return 0
     if not args.accept_partial:
         parser.error("MAGE参考验收未完成；试运行需 --accept-partial")
     try:
-        output = run_partial_batch(args.request, args.config, args.output_root, args.run_id)
+        if args.command == "drq":
+            from cgm_library.workflows.drq_batch import run_drq_batch
+
+            output = run_drq_batch(
+                args.request,
+                args.config,
+                args.output_root,
+                args.run_id,
+                workers=args.workers,
+                resume=args.resume,
+            )
+        else:
+            output = run_partial_batch(args.request, args.config, args.output_root, args.run_id)
     except CalculationError as exc:
         print(
             json.dumps(

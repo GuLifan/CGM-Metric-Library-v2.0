@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 · 261110 — DRQ research delivery
+
+- Add 13 grouped-window CSVs, a 14-day FBS CSV and a 14-sheet daily workbook, including the actual pump treatment window.
+- Use the approved v2.0.0 range, risk, coverage, night-event, FBS and conditional-event definitions.
+- Add separately named previous-CGM-day MODD and patient-level batch audit records with resumable execution.
+- Add reversible single-CSV export and restoration of a complete result ZIP with per-asset hash checks.
+- Document the approved definitions, legacy column mapping, output formatting and deployment commands.
+
 ## 2.0.0 · 261109 — Research table revision
 
 - Export decimal results to four places using decimal half-up rounding. Compute thresholds, coverage, events and missingness before formatting.
