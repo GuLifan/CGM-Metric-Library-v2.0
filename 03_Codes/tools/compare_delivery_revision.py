@@ -16,6 +16,7 @@ from validate_delivery import same
 
 from cgm_library.io.pump_request import PUMP_PREFIX
 from cgm_library.studies.drq import GROUP_FILES
+from cgm_library.workflows.layout import resolve_audit_root
 
 
 def compare(archive, root, previous_run):
@@ -37,7 +38,7 @@ def compare(archive, root, previous_run):
         for i, (a, b) in enumerate(zip(before, after, strict=True), 1):
             if i in skip_rows:
                 continue
-            assert set(a) == set(b), label
+            assert set(a) <= set(b), label
             for key in a:
                 if key in ("window_start", "window_end"):
                     equal = local(a[key]) == local(b[key])
@@ -96,7 +97,7 @@ def compare(archive, root, previous_run):
         for a, b in zip(old_book, new_book, strict=True):
             ai, bi = a.values, b.values
             ah, bh = next(ai), next(bi)
-            assert ah == bh
+            assert list(ah) == [k for k in bh if k in ah]
             check_rows(
                 [dict(zip(ah, r, strict=True)) for r in ai],
                 [dict(zip(bh, r, strict=True)) for r in bi],
@@ -104,12 +105,23 @@ def compare(archive, root, previous_run):
             )
         old_book.close()
         new_book.close()
+        if any(n.endswith("AfterDischarge_Daily_Results.csv") for n in z.namelist()):
+            check_rows(
+                old_rows("AfterDischarge_Daily_Results.csv"),
+                file_rows(root / "results" / f"{prefix}_AfterDischarge_Daily_Results.csv"),
+                "after_discharge",
+            )
+            for suffix in ("Hypoglycemia_Events.csv", "Window_Quality.csv"):
+                old_name = next(n for n in z.namelist() if n.endswith(suffix))
+                assert z.read(old_name) == (root / "results" / f"{prefix}_{suffix}").read_bytes(), (
+                    suffix
+                )
     source_mismatches = []
+    old_audit = resolve_audit_root(previous_run, prior)
+    new_audit = resolve_audit_root(root, manifest)
     for i in range(1, manifest["patient_count"] + 1):
-        a = json.loads(
-            (previous_run / "audit" / f"request_{i:04d}.json").read_text(encoding="utf-8")
-        )
-        b = json.loads((root / "audit" / f"request_{i:04d}.json").read_text(encoding="utf-8"))
+        a = json.loads((old_audit / f"request_{i:04d}.json").read_text(encoding="utf-8"))
+        b = json.loads((new_audit / f"request_{i:04d}.json").read_text(encoding="utf-8"))
         if a.get("source_sha256") != b.get("source_sha256"):
             source_mismatches.append(i)
         if a.get("source_sha256"):

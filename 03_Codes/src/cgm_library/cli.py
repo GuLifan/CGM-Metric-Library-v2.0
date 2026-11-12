@@ -41,6 +41,11 @@ def main() -> int:
     deliver.add_argument("--resume", action="store_true")
     deliver.add_argument("--prefix", default="DRQ261112_CML2.0_2204")
     deliver.add_argument("--accept-partial", action="store_true")
+    relayout = commands.add_parser("relayout", help="从已核验计算记录重排交付表，不重算指标")
+    relayout.add_argument("--source-run", type=Path, required=True)
+    relayout.add_argument("--output-root", type=Path, required=True)
+    relayout.add_argument("--run-id", required=True)
+    relayout.add_argument("--prefix", default="DRQ261112_CML2.0_2204")
     compact = commands.add_parser("collapse", help="将结果ZIP无损浓缩到一张患者CSV")
     compact.add_argument("--archive", type=Path, required=True)
     compact.add_argument("--flat-results", type=Path, required=True)
@@ -49,6 +54,11 @@ def main() -> int:
     restore.add_argument("--table", type=Path, required=True)
     restore.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.command == "relayout":
+        from cgm_library.workflows.layout import reexport_delivery
+
+        print(reexport_delivery(args.source_run, args.output_root, args.run_id, args.prefix))
+        return 0
     if args.command in ("collapse", "restore"):
         from cgm_library.io.archive import collapse_results, restore_results
 

@@ -1,5 +1,30 @@
 # 261112交付与部署 / Follow-up delivery and deployment
 
+布局订正2为当前显示格式：Mode0—Mode7和两类daily的低血糖次数后，紧邻增加_times时段列；专门事件明细CSV保留。出院后daily主要查看AfterDischarge_Daily_D1-14.xlsx，含14个sheet，每个sheet保留全部患者。原CSV长表作为附加数据继续提供。
+
+Layout 2 is the current presentation: hypoglycemia counts in Mode and both daily layouts
+are immediately followed by readable _times columns. Dedicated event details are retained.
+The primary follow-up display is a 14-sheet workbook with the entire cohort on each sheet;
+the original long CSV remains available.
+
+多个事件时段以分号分隔，使用完整日期和时分秒，不附时区标识。次数为0时保留0且时段为空；次数缺失时，次数和时段均为空。Excel时段列自动换行，与次数保持对应。延长、Level2、条件阈值和昼夜列均按其对应次数独立选取事件。
+
+Multiple intervals use semicolon separators and full local dates and clock times without
+suffixes. A zero count remains zero with a blank interval cell; missing counts have blank
+intervals. Excel wraps interval text. Typed, conditional and day/night events are selected
+independently to match their respective counts.
+
+已有批次仅重排布局的命令如下。新批次引用原计算证据，须同时保留原批次目录；不重复计算或改变有效数值。
+
+For an existing run, re-export presentation only. Retain the original calculation directory,
+which supplies the verified audit evidence. This does not recalculate or change metrics.
+
+```sh
+uv run --frozen cgm-library relayout --source-run ../_Outputs/CML2204_261112 --output-root ../_Outputs --run-id CML2204_261112_layout2 --prefix DRQ261112_CML2.0_2204
+uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112_layout2
+uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112_layout2 ../_Outputs/DRQ261112_CML2.0_2204_layout2.zip
+```
+
 本版将Mode、CGM逐日、ATTD特征、NewMetric与新增结果统一到同一次逐患者计算。包版本仍为2.0.0，订正标识261112。
 
 This revision generates Mode tables, CGM daily results, ATTD features, NewMetric and follow-up
@@ -35,8 +60,9 @@ package. A SHA-256 checksum is saved alongside the ZIP.
 
 | 输出 / Output | 粒度与用途 / Grain and purpose |
 |---|---|
-| Mode0—Mode7 CSV | 每例每窗口一行；保留统一88列。 / One row per request and window; shared 88-column schema. |
-| Mode0_Daily_D1-14.xlsx | 14张CGM日工作表，89列；起点为首个有效CGM时刻。 / Fourteen CGM-day sheets with 89 columns, starting at the first valid reading. |
+| Mode0—Mode7 CSV | 每例每窗口一行；统一109列，含21组次数/时段列。 / One row per request and window; 109 columns including 21 adjacent count/time pairs. |
+| Mode0_Daily_D1-14.xlsx | 14张CGM日工作表，110列；起点为首个有效CGM时刻。 / Fourteen CGM-day sheets with 110 columns, starting at the first valid reading. |
+| AfterDischarge_Daily_D1-14.xlsx | 14张出院后日工作表，118列，每张保留全部患者。缺少记录的日期保留空值、覆盖信息及原因。 / Fourteen 118-column follow-up sheets retaining all patients, including missing-day reasons. |
 | AfterDischarge_Daily_Results.csv | 每例每出院后日一行；含覆盖与原因。 / One row per request and follow-up day, including quality and reasons. |
 | Hypoglycemia_Events.csv | 每例每窗口每时段每个指定类型事件一行。 / One row per patient, window, period and typed event. |
 | Window_Quality.csv | 每例窗口与全天、昼、夜资格；区分零事件和缺测。 / Per-window and period eligibility, distinguishing zero events from missing data. |

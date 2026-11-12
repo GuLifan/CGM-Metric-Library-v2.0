@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 FONT = "Times New Roman"
@@ -40,6 +40,8 @@ def write_workbook(path, sheets):
     book = Workbook(write_only=True)
     body = Font(name=FONT, size=11)
     heading = Font(name=FONT, size=11, bold=True, color="FFFFFF")
+    wrapped = Alignment(wrap_text=True, vertical="top")
+    top = Alignment(vertical="top")
     book._fonts[0] = body
     for title, table in sheets:
         sheet = book.create_sheet(title)
@@ -53,11 +55,19 @@ def write_workbook(path, sheets):
             cell.fill = PatternFill("solid", fgColor="185B61")
             headers.append(cell)
         sheet.append(headers)
-        for record in table.itertuples(index=False, name=None):
+        time_indices = {i for i, name in enumerate(table) if name.endswith("_times")}
+        for row_number, record in enumerate(table.itertuples(index=False, name=None), 2):
             cells = []
-            for value in record:
+            lines = 1
+            for index, value in enumerate(record):
                 cell = WriteOnlyCell(sheet)
                 cell.font = body
+                if time_indices:
+                    cell.alignment = top
+                if index in time_indices:
+                    cell.alignment = wrapped
+                    if isinstance(value, str) and value:
+                        lines = max(lines, value.count("; ") + 1)
                 if pd.notna(value):
                     if isinstance(value, (bool, np.bool_)):
                         cell.value = bool(value)
@@ -70,6 +80,8 @@ def write_workbook(path, sheets):
                         cell.value = str(value)
                         cell.data_type = "s"
                 cells.append(cell)
+            if lines > 1:
+                sheet.row_dimensions[row_number].height = min(200, 16 * lines)
             sheet.append(cells)
         sheet.auto_filter.ref = f"A1:{get_column_letter(len(table.columns))}{len(table) + 1}"
     temp = path.with_suffix(".xlsx.tmp")

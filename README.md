@@ -15,6 +15,7 @@
 | 261110 · DRQ扩展 | 新增13张窗口CSV、FBS序列、14张CGM日工作表和Mode7泵期间；DRQ入口允许出院后才开始记录。 | Added 13 window CSVs, FBS, 14 CGM-day sheets and Mode7. The DRQ entry accepts post-discharge-only recordings. |
 | 261111 · 交付精简 | 删除交付analysis_id，统一Mode删列，保留低血糖次数。NewMetric归档仍来自261109，因此与DRQ存在两例资格差异。 | Removed delivery analysis IDs and redundant Mode columns. Archived NewMetric remained from 261109, causing two eligibility differences. |
 | 261112 · 统一与随访 | 撤销旧入口对出院后才开始CGM的整例拒绝，Sparse目标按原协议保留缺失原因。Mode、daily、ATTD与NewMetric同批生成，新增出院后逐日和可读低血糖事件明细。 | Removed the old global rejection while retaining sparse-target eligibility reasons. Mode, daily, ATTD and NewMetric now share one run, with discharge-anchored daily results and readable hypoglycemia events. |
+| 261112 · 布局订正2 | 参照DRQ旧表，在Mode0—Mode7及daily低血糖次数后紧邻加入时段列。出院后daily新增14个sheet，每张保留2204例；专门事件表和CSV长表保留。 | Added adjacent event-time columns to Mode and daily tables. Follow-up daily now has 14 sheets retaining the full cohort. Dedicated event details and the long CSV remain available. |
 
 ## 部署 / Deployment
 
@@ -35,6 +36,18 @@ documents every table, window, event and missing-value rule.
 uv run --frozen cgm-library deliver --request ../_RequestList/request.csv --config configs/site.local.yaml --output-root ../_Outputs --run-id CML2204_261112 --prefix DRQ261112_CML2.0_2204 --workers 4 --accept-partial
 uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112
 uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112 ../_Outputs/DRQ261112_CML2.0_2204.zip
+```
+
+已有261112批次时，使用以下命令仅重排交付，不重算指标。新目录引用原批次中经过哈希核验的audit，不重复复制计算证据；原批次必须保留。原ZIP保持可用。
+
+For an existing 261112 run, revise presentation without recalculating metrics. The new run
+references hash-verified original audit records, so retain the source directory. The previous
+ZIP remains available.
+
+```sh
+uv run --frozen cgm-library relayout --source-run ../_Outputs/CML2204_261112 --output-root ../_Outputs --run-id CML2204_261112_layout2 --prefix DRQ261112_CML2.0_2204
+uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112_layout2
+uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112_layout2 ../_Outputs/DRQ261112_CML2.0_2204_layout2.zip
 ```
 
 261110 增加经批准的 DRQ 15 表输出、Mode7 胰岛素泵期间窗口，以及完整结果包的可还原单 CSV。操作详见下方 DRQ 交付指南。

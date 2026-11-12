@@ -6,6 +6,7 @@ import csv
 import json
 from collections import Counter
 from contextlib import ExitStack
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -14,11 +15,12 @@ from cgm_library.contracts.fields import ASSETS
 from cgm_library.io.pump_request import PUMP_PREFIX
 from cgm_library.io.tables import four_places, write_csv, write_workbook
 from cgm_library.studies.delivery import (
-    AFTER_DAY_COLUMNS,
     EVENT_COLUMNS,
     PERIODS,
     QC_COLUMNS,
     WINDOW_NAMES,
+    after_day_columns,
+    event_time_column,
     mode_columns,
     scalar_columns,
     summary_columns,
@@ -75,7 +77,7 @@ def frame(records, columns):
     for column in data:
         if is_time(column):
             data[column] = data[column].map(lambda v: local_time(v) if pd.notna(v) else "")
-        elif column in TEXT_COLUMNS or column.endswith("_reason"):
+        elif column in TEXT_COLUMNS or column.endswith(("_reason", "_times")):
             data[column] = data[column].fillna("")
         elif column.endswith("flag"):
             data[column] = data[column].astype("boolean")
@@ -110,6 +112,82 @@ def _day_number(window):
         if window.startswith("post_discharge_day_")
         else None
     )
+
+
+def add_event_times(record, window, values):
+    """Use saved event facts and pre-rounding threshold membership, not rounded nadirs."""
+    result = values.copy()
+    evidence = record["audit"].get(window, {})
+    for column in mode_columns(include_times=False):
+        target = event_time_column(column)
+        if target is None:
+            continue
+        count = values.get(column)
+        if count is None or pd.isna(count):
+            result[target] = None
+            continue
+        prefix, kind = column.rsplit("__", 1) if "__" in column else ("all", column)
+        facts = evidence.get(
+            {"all": "events", "night_00to06": "night_events", "day_06to24": "day_events"}[prefix],
+            [],
+        )
+        kind = kind.removesuffix("_n")
+        if kind.startswith("hypo_cond_lt"):
+            threshold = f"3.{kind[-1]}"
+            selected = [
+                e
+                for e in facts
+                if e["event_type"] == "hypo_episode_lt3p9"
+                and threshold in e.get("hypo_cond_thresholds", "").split("|")
+            ]
+        else:
+            selected = [e for e in facts if e["event_type"] == kind]
+        if len(selected) != int(count):
+            raise ValueError(f"Saved event facts disagree with {window}/{column}")
+        selected = sorted(selected, key=lambda e: (e["event_start"], e["event_end"]))
+        result[target] = "; ".join(
+            interval_text(e["event_start"], e["event_end"]) for e in selected
+        )
+    return result
+
+
+@lru_cache(maxsize=65536)
+def interval_text(start, end):
+    return f"{local_time(start)} - {local_time(end)}"
+
+
+def followup_sheet_row(record, request, day):
+    """Pad the 14-sheet display without inventing metrics for unobserved follow-up days."""
+    from cgm_library.contracts.schema import CalculationError
+    from cgm_library.io.reader import parse_anchor
+
+    name = f"post_discharge_day_{day}"
+    values = record["tables"].get(name)
+    if values is not None:
+        return values | {
+            "post_discharge_day": day,
+            "computation_status": record["computation_status"],
+        }
+    try:
+        start = parse_anchor(request["出院日期"]) + pd.Timedelta(days=day - 1)
+        end = start + pd.Timedelta(days=1)
+    except CalculationError:
+        start = end = None
+    computed = record["computation_status"] == "COMPUTED"
+    row = {
+        "post_discharge_day": day,
+        "window_start": start,
+        "window_end": end,
+        "computation_status": record["computation_status"],
+        "sufficient_flag": False,
+        "valid_minutes": 0.0 if computed else None,
+        "coverage_pct": 0.0 if computed else None,
+        "metric_reason": "NO_RECORDING_IN_WINDOW" if computed else record["error_code"],
+    }
+    for period in PERIODS:
+        row[period + "__coverage_pct"] = 0.0 if computed else None
+        row[period + "__sufficient_flag"] = False
+    return row
 
 
 def _overview(record, identity):
@@ -170,24 +248,32 @@ def _events(record, window, row, identity):
             )
 
 
-def export_delivery(root, request, prefix):
+def export_delivery(root, request, prefix, *, audit_root=None):
     """Keep only compact scalar rows in memory; event details stream patient by patient."""
     out = root / "results"
     out.mkdir(exist_ok=True)
+    audit_root = audit_root or root / "audit"
     grouped = {name: [] for name in GROUP_FILES}
     daily = {n: [] for n in range(1, 15)}
+    followup_daily = {n: [] for n in range(1, 15)}
     fbs, statuses, overview, scalars, full, sparse = [], [], [], [], [], []
     counts = Counter()
     with ExitStack() as stack:
         after = _writer(
-            stack, out / f"{prefix}_AfterDischarge_Daily_Results.csv", AFTER_DAY_COLUMNS
+            stack, out / f"{prefix}_AfterDischarge_Daily_Results.csv", after_day_columns()
         )
         events = _writer(stack, out / f"{prefix}_Hypoglycemia_Events.csv", EVENT_COLUMNS)
         qc = _writer(stack, out / f"{prefix}_Window_Quality.csv", QC_COLUMNS)
         for index, req in enumerate(request.to_dict("records"), 1):
             record = json.loads(
-                (root / "audit" / f"request_{index:04d}.json").read_text(encoding="utf-8")
+                (audit_root / f"request_{index:04d}.json").read_text(encoding="utf-8")
             )
+            if record["request"] != req:
+                raise ValueError(f"Request order or identity changed at row {index}")
+            record["tables"] = {
+                name: add_event_times(record, name, values)
+                for name, values in record["tables"].items()
+            }
             identity = {k: req[k] for k in PUMP_PREFIX}
             status = identity | {
                 k: record.get(k, "")
@@ -216,6 +302,8 @@ def export_delivery(root, request, prefix):
                 output_rows.append(identity | record["tables"].get(window, {}))
             for n, output_rows in daily.items():
                 output_rows.append(identity | record["tables"].get(f"cgm_day_{n}", {}))
+            for n, output_rows in followup_daily.items():
+                output_rows.append(identity | followup_sheet_row(record, req, n))
             fbs.append(identity | record["fbs"])
             # Even patient-level failures retain D1-D7 with their actual discharge anchor.
             windows = record["tables"].copy()
@@ -285,6 +373,15 @@ def export_delivery(root, request, prefix):
             for n, rows in daily.items()
         ),
     )
+    write_workbook(
+        out / f"{prefix}_AfterDischarge_Daily_D1-14.xlsx",
+        ((f"Day {n}", frame(rows, after_day_columns())) for n, rows in followup_daily.items()),
+    )
+    counts["after_discharge_workbook_rows"] = len(request) * 14
+    counts["after_discharge_workbook_sheets"] = 14
+    counts["event_time_column_pairs_per_mode"] = sum(
+        event_time_column(c) is not None for c in mode_columns(include_times=False)
+    )
     write_csv(
         frame(fbs, [*PUMP_PREFIX, *[f"cgm_d{n}__fasting_cgm_0600" for n in range(1, 15)]]),
         out / f"{prefix}_FBS_24H_D1-14_Results.csv",
@@ -325,7 +422,7 @@ def export_delivery(root, request, prefix):
     )
     write_csv(status_frame, root / "patient_status.csv")
     (out / "README.md").write_text(
-        f"""# CML v2.0.0 · 261112 交付 / Delivery
+        f"""# CML v2.0.0 · 261112 布局订正2 / Delivery layout 2
 
 全部表格来自同一次计算，患者数 {len(request)}，完成处理 {sum(r["computation_status"] == "COMPUTED" for r in statuses)}。
 All tables come from one calculation, with {len(request)} requested patients.
@@ -339,6 +436,13 @@ Mode0 Daily沿用首个有效CGM时刻作为起点。AfterDischarge Daily以出�
 CGM days start at the first valid reading. Post-discharge days start at discharge and span
 exactly 24 hours. The final recording day retains a full 24-hour coverage denominator.
 Days 1–7 retain all patients. Later days extend to each record's end. Metrics require 70% coverage.
+
+出院后daily的主要查看文件为AfterDischarge_Daily_D1-14.xlsx，含Day 1—Day 14，每张表保留全部患者。
+原CSV长表作为附加数据保留。Excel补充展示的无记录日保留日期、空白指标与原因，不延长观测或重算指标。
+
+The primary follow-up display is a 14-sheet workbook with all patients on each day.
+The existing long CSV remains available. Padded days have anchors, missing metrics and a reason;
+padding does not extend observation or change computed values.
 
 昼夜按00:00—06:00和06:00—24:00与研究窗的交集计算。单日不提供住院FBS-CV和窗内MODD；
 与前一个出院后日的MODD单列，要求两日合格，D1为空。
@@ -361,14 +465,17 @@ Formal MAGE remains pending reference validation; its candidate is explicitly id
 ## 低血糖事件 / Hypoglycemia events
 
 Hypoglycemia Events每行是一位患者在一个窗口、一个时段内的一次指定类型事件。
+Mode和两类daily的每个低血糖次数列后紧邻_times列，多个起止区间用分号分隔，并保留日期以免跨日混淆。
 普通低血糖、Level2、延长低血糖等可以嵌套，不得跨类型或重叠窗口直接累加。
 只列相应时段覆盖合格的正式事件；未合格窗口的观测事实保存在audit中。
 duration_min为事件经过时长，condition_minutes为低于阈值的支持分钟。
 left_censored/right_censored说明边界或缺测截断，不代表已经观测到完整发生和恢复。
 hypo_cond_thresholds保留普通事件在舍入前满足的严格最低值阈值，使用竖线分隔。
 
-Each event row identifies a patient, window, period and event type. Types can be nested and
-windows overlap; their counts must not be summed indiscriminately. Only qualified outcomes are
+Each event row identifies a patient, window, period and event type.
+Mode and both daily layouts place a readable _times column immediately after each hypoglycemia count.
+Multiple date-and-time intervals are separated by semicolons. The dedicated event table is retained.
+Types can be nested and windows overlap; their counts must not be summed indiscriminately. Only qualified outcomes are
 exported here. Unqualified observed facts remain in audit. Elapsed duration and below-threshold
 minutes are distinct. Censor flags indicate incomplete observation. Conditional threshold
 membership is determined before rounding and retained in hypo_cond_thresholds.
@@ -386,6 +493,8 @@ values are blank. Excel uses Times New Roman. CSV uses UTF-8 with BOM.
 - 合格逐日行数 / Qualified follow-up rows: {counts["after_discharge_qualified_rows"]}
 - 最后出院后日 / Maximum follow-up day: {counts["maximum_post_discharge_day"]}
 - 低血糖事件明细行数 / Hypoglycemia event rows: {counts["hypoglycemia_event_rows"]}
+- 出院后Excel展示行数 / Follow-up workbook rows: {counts["after_discharge_workbook_rows"]}
+- 每张Mode表的次数/时段配对 / Adjacent count/time pairs per Mode: {counts["event_time_column_pairs_per_mode"]}
 """,
         encoding="utf-8",
     )

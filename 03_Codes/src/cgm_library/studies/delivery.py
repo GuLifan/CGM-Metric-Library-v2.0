@@ -6,6 +6,7 @@ from cgm_library.io.pump_request import PUMP_PREFIX
 
 REVISION = "261112"
 DEFAULT_PREFIX = "DRQ261112_CML2.0_2204"
+LAYOUT_VERSION = 2
 PERIODS = ("night_00to06", "day_06to24")
 SLIM_MAIN = (
     [
@@ -135,8 +136,25 @@ SHORT_UNUSED = {
 }
 
 
-def mode_columns():
-    return [*PUMP_PREFIX, "window_start", "window_end", *SLIM_METRICS]
+LOW_EVENT_COUNTS = {f"{r.event_type}_n" for r in CONFIRMED_RULES if not r.high} | {
+    k for k in CONDITION_COUNTS if k.endswith("_n")
+}
+
+
+def event_time_column(count_column):
+    """Only typed hypoglycemia counts get an adjacent readable interval column."""
+    if count_column.rsplit("__", 1)[-1] in LOW_EVENT_COUNTS:
+        return count_column.removesuffix("_n") + "_times"
+    return None
+
+
+def with_time_columns(columns):
+    return [part for column in columns for part in (column, event_time_column(column)) if part]
+
+
+def mode_columns(*, include_times=True):
+    columns = [*PUMP_PREFIX, "window_start", "window_end", *SLIM_METRICS]
+    return with_time_columns(columns) if include_times else columns
 
 
 def scalar_columns():
@@ -167,6 +185,12 @@ AFTER_DAY_COLUMNS = [
     "MODD_vs_previous_discharge_day_mmol_L",
     *[f"{p}__{k}" for p in PERIODS for k in ("coverage_pct", "sufficient_flag")],
 ]
+
+
+def after_day_columns(*, include_times=True):
+    return with_time_columns(AFTER_DAY_COLUMNS) if include_times else list(AFTER_DAY_COLUMNS)
+
+
 QC_COLUMNS = [
     *PUMP_PREFIX,
     "window_name",

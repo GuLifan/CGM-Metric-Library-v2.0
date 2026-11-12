@@ -12,10 +12,17 @@ from test_drq_delivery import inputs
 
 from cgm_library.contracts.schema import load_config
 from cgm_library.io.reader import read_request
-from cgm_library.studies.delivery import AFTER_DAY_COLUMNS, EVENT_COLUMNS
+from cgm_library.studies.delivery import (
+    EVENT_COLUMNS,
+    after_day_columns,
+    event_time_column,
+    mode_columns,
+)
 from cgm_library.studies.drq import post_discharge_windows
+from cgm_library.workflows.delivery import add_event_times
 from cgm_library.workflows.drq_batch import run_drq_batch
 from cgm_library.workflows.drq_patient import calculate_drq_patient
+from cgm_library.workflows.layout import reexport_delivery
 from cgm_library.workflows.patient import calculate_patient_partial
 
 
@@ -67,7 +74,7 @@ def test_revised_batch_keeps_ids_readable_events_and_same_batch_features(tmp_pat
             return reader.fieldnames, list(reader)
 
     headers, rows = read("AfterDischarge_Daily_Results.csv")
-    assert headers == AFTER_DAY_COLUMNS and len(rows) == 7
+    assert headers == after_day_columns() and len(rows) == 7
     assert rows[0]["window_start"] == "2026-01-03 08:00:00"
     assert rows[0]["MEAN"] == "6.0000"
     assert rows[1]["MODD_vs_previous_discharge_day_mmol_L"] == "0.0000"
@@ -147,3 +154,74 @@ def test_single_conditional_threshold_is_a_category_not_a_decimal_measurement(tm
         str(Path(__file__).resolve().parents[2] / "tools/validate_delivery.py")
     )["validate"]
     assert validate(root)["patient_count"] == 1
+
+
+def test_adjacent_time_columns_use_unrounded_membership_and_independent_period_facts():
+    event = {
+        "event_type": "hypo_episode_lt3p9",
+        "nadir": 3.8,
+        "event_start": "2026-01-01T23:55:00+08:00",
+        "event_end": "2026-01-02T00:15:00+08:00",
+        "hypo_cond_thresholds": "3.8",
+    }
+    night = event | {"event_start": "2026-01-02T00:00:00+08:00"}
+    record = {"audit": {"test": {"events": [event], "night_events": [night]}}}
+    row = {
+        "hypo_episode_lt3p9_n": 1,
+        "hypo_cond_lt3p8_n": 1,
+        "level2_period_lt3p0_n": 0,
+        "night_00to06__hypo_episode_lt3p9_n": 1,
+    }
+    result = add_event_times(record, "test", row)
+    assert result["hypo_cond_lt3p8_times"] == result["hypo_episode_lt3p9_times"]
+    assert result["hypo_episode_lt3p9_times"] == "2026-01-01 23:55:00 - 2026-01-02 00:15:00"
+    assert result["night_00to06__hypo_episode_lt3p9_times"].startswith("2026-01-02 00:00:00")
+    assert result["level2_period_lt3p0_times"] == ""
+    assert result["day_06to24__hypo_episode_lt3p9_times"] is None
+    assert len(mode_columns()) == 109
+    for index, column in enumerate(mode_columns()):
+        partner = event_time_column(column)
+        if partner:
+            assert mode_columns()[index + 1] == partner
+    assert event_time_column("prolonged_hyper_gt13p9_120_n") is None
+
+
+def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monkeypatch):
+    request, config = inputs(tmp_path)
+    source = tmp_path / "source/sample.csv"
+    data = pd.read_csv(source)
+    data.loc[24:26, "v"] = 6
+    data.loc[2 * 288 + 24 : 2 * 288 + 26, "v"] = 3.75
+    data.to_csv(source, index=False)
+    root = run_drq_batch(
+        request, config, tmp_path, "source_run", workers=1, extended=True, prefix="SOURCE"
+    )
+    path = root / "results/SOURCE_AfterDischarge_Daily_D1-14.xlsx"
+    book = load_workbook(path, read_only=True)
+    assert book.sheetnames == [f"Day {n}" for n in range(1, 15)]
+    for n in range(1, 15):
+        rows = list(book[f"Day {n}"].values)
+        assert len(rows) == 2 and list(rows[0]) == after_day_columns()
+        record = dict(zip(rows[0], rows[1], strict=True))
+        assert record["post_discharge_day"] == n and record["住院号"] == "0001"
+        if n == 1:
+            assert record["hypo_episode_lt3p9_n"] == 1
+            assert record["hypo_episode_lt3p9_times"] == "2026-01-03 10:00:00 - 2026-01-03 10:15:00"
+        if n == 14:
+            assert record["MEAN"] is None and record["coverage_pct"] == 0
+            assert record["metric_reason"] == "NO_RECORDING_IN_WINDOW"
+    book.close()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Presentation revision must not recalculate patient metrics")
+
+    monkeypatch.setattr("cgm_library.workflows.drq_patient.calculate_drq_patient", forbidden)
+    revised = reexport_delivery(root, tmp_path, "layout_only", "REVISED")
+    assert not (revised / "audit").exists()
+    assert (root / "results/SOURCE_Hypoglycemia_Events.csv").read_bytes() == (
+        revised / "results/REVISED_Hypoglycemia_Events.csv"
+    ).read_bytes()
+    validate = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "tools/validate_delivery.py")
+    )["validate"]
+    assert validate(revised)["followup_workbook_rows"] == 14

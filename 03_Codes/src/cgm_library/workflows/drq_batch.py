@@ -240,6 +240,7 @@ def run_drq_batch(
             "pending_rule_gates": ["MAGE_REFERENCE_VALIDATION"],
             "table_decimal_places": 4,
             "delivery_revision": "261112" if extended else "261110",
+            "delivery_layout_version": 2 if extended else 1,
             "delivery_prefix": prefix,
             "delivery_statistics": delivery_stats,
             "delivery_files": sorted(p.name for p in (root / "results").iterdir()),

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 · 261112 layout 2 — Adjacent event times and daily sheets
+
+- Pair each retained hypoglycemia count with a readable adjacent interval column in Mode and both daily layouts.
+- Add a 14-sheet post-discharge workbook retaining the full cohort and missing-day reasons.
+- Keep the dedicated event CSV and supplemental long daily CSV.
+- Re-export from hash-verified calculation evidence without recalculating metrics or duplicating patient audits.
+- Retain integer counts, four-place half-up decimals, local clock timestamps and Times New Roman workbooks.
+
 ## 2.0.0 · 261112 — Unified follow-up delivery
 
 - Accept recordings starting at or after discharge in both calculation entries; window and sparse-target eligibility remain independent.

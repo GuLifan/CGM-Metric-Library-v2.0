@@ -19,10 +19,18 @@ from cgm_library.contracts.fields import ASSETS
 from cgm_library.events.engine import CONFIRMED_RULES
 from cgm_library.io.pump_request import PUMP_PREFIX
 from cgm_library.io.reader import parse_anchor
-from cgm_library.studies.delivery import PERIODS, WINDOW_NAMES, mode_columns, scalar_columns
+from cgm_library.studies.delivery import (
+    PERIODS,
+    WINDOW_NAMES,
+    after_day_columns,
+    event_time_column,
+    mode_columns,
+    scalar_columns,
+)
 from cgm_library.studies.drq import GROUP_FILES
-from cgm_library.workflows.delivery import TEXT_COLUMNS
+from cgm_library.workflows.delivery import TEXT_COLUMNS, add_event_times, followup_sheet_row
 from cgm_library.workflows.delivery import display as delivery_display
+from cgm_library.workflows.layout import resolve_audit_root
 
 
 def display(column, value):
@@ -52,6 +60,8 @@ def validate(root):
         with path.open("rb") as handle:
             assert hashlib.file_digest(handle, "sha256").hexdigest() == expected, name
     prefix = manifest["delivery_prefix"]
+    layout = manifest.get("delivery_layout_version", 1) >= 2
+    audit_root = resolve_audit_root(root, manifest)
     out = root / "results"
     with (root / "request.csv").open(encoding="utf-8-sig", newline="") as handle:
         requests = list(csv.DictReader(handle))
@@ -89,9 +99,23 @@ def validate(root):
             iterator = sheet.iter_rows()
             cells = next(iterator)
             headers = [c.value for c in cells]
-            assert headers == mode_columns() + ["MODD_vs_previous_cgm_day_mmol_L"]
+            assert headers == mode_columns(include_times=layout) + [
+                "MODD_vs_previous_cgm_day_mmol_L"
+            ]
             assert all(c.font.name == "Times New Roman" for c in cells)
             daily_readers[n] = headers, iterator
+        after_daily_readers = {}
+        if layout:
+            after_book = load_workbook(
+                out / f"{prefix}_AfterDischarge_Daily_D1-14.xlsx", read_only=True
+            )
+            stack.callback(after_book.close)
+            assert after_book.sheetnames == [f"Day {n}" for n in range(1, 15)]
+            for n, sheet in enumerate(after_book, 1):
+                iterator = sheet.iter_rows()
+                headers = [c.value for c in next(iterator)]
+                assert headers == after_day_columns()
+                after_daily_readers[n] = headers, iterator
         summary = load_workbook(out / f"{prefix}_NewMetric_Summary.xlsx", read_only=True)
         stack.callback(summary.close)
         summary_readers = {}
@@ -107,6 +131,8 @@ def validate(root):
             for key, cell in zip(headers, cells, strict=True):
                 if cell.value is not None:
                     assert cell.font.name == "Times New Roman", label
+                    if key.endswith("_times"):
+                        assert cell.alignment.wrap_text
                     if cell.number_format == "0.0000":
                         assert (
                             float(Decimal(str(cell.value)).quantize(Decimal("0.0001")))
@@ -116,19 +142,27 @@ def validate(root):
                 checked["excel_cells"] += 1
 
         for i, req in enumerate(requests, 1):
-            record = json.loads(
-                (root / "audit" / f"request_{i:04d}.json").read_text(encoding="utf-8")
-            )
+            record = json.loads((audit_root / f"request_{i:04d}.json").read_text(encoding="utf-8"))
+            if layout:
+                record["tables"] = {
+                    name: add_event_times(record, name, row)
+                    for name, row in record["tables"].items()
+                }
             ident = tuple(req[k] for k in PUMP_PREFIX)
             assert all(record["request"][k] == req[k] for k in PUMP_PREFIX)
             for window, suffix in GROUP_FILES.items():
                 reader = readers[f"{prefix}_{suffix}"]
-                assert reader.fieldnames == mode_columns()
+                assert reader.fieldnames == mode_columns(include_times=layout)
                 check(
                     next(reader), req | record["tables"].get(window, {}), reader.fieldnames, suffix
                 )
             for n, reader in daily_readers.items():
                 check_sheet(reader, req | record["tables"].get(f"cgm_day_{n}", {}), f"Day {n}")
+            for n, reader in after_daily_readers.items():
+                check_sheet(
+                    reader, req | followup_sheet_row(record, req, n), f"After discharge Day {n}"
+                )
+                checked["followup_workbook_rows"] += 1
             scalar = req.copy()
             for window in WINDOW_NAMES:
                 scalar.update(
@@ -211,7 +245,11 @@ def validate(root):
                     assert [identity(r) for r in reader] == [identity(r) for r in requests]
                 else:
                     assert next(reader, None) is None
-        for _, it in list(daily_readers.values()) + list(summary_readers.values()):
+        for _, it in (
+            list(daily_readers.values())
+            + list(after_daily_readers.values())
+            + list(summary_readers.values())
+        ):
             assert next(it, None) is None
 
     actual_events, actual_conditions = Counter(), Counter()
@@ -268,8 +306,21 @@ def validate(root):
     for path in out.glob("*.csv"):
         with path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
+            if layout:
+                for index, column in enumerate(reader.fieldnames):
+                    times = event_time_column(column)
+                    if times and times in reader.fieldnames:
+                        assert reader.fieldnames[index + 1] == times
             for row in reader:
                 for key, value in row.items():
+                    if layout and key.endswith("_times"):
+                        count = row[key.removesuffix("_times") + "_n"]
+                        parts = value.split("; ") if value else []
+                        assert len(parts) == (int(count) if count else 0)
+                        for part in parts:
+                            start, end = part.split(" - ")
+                            assert pd.Timestamp(start) < pd.Timestamp(end)
+                            assert "+08:00" not in part and "UTC" not in part
                     if key not in TEXT_COLUMNS and re.fullmatch(r"-?\d+\.\d+", value or ""):
                         assert len(value.rsplit(".", 1)[1]) == 4, (path.name, key)
     assert (
@@ -278,6 +329,8 @@ def validate(root):
     assert checked["event_rows"] == manifest["delivery_statistics"].get(
         "hypoglycemia_event_rows", 0
     )
+    if layout:
+        assert checked["followup_workbook_rows"] == 14 * len(requests)
     return dict(checked) | {
         "patient_count": len(requests),
         "delivery_file_count": len(manifest["delivery_files"]),
