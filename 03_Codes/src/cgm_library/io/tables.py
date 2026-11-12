@@ -47,7 +47,9 @@ def write_workbook(path, sheets):
         sheet = book.create_sheet(title)
         sheet.freeze_panes = "C2"
         for col, name in enumerate(table, 1):
-            sheet.column_dimensions[get_column_letter(col)].width = min(56, max(15, len(name) + 3))
+            sheet.column_dimensions[get_column_letter(col)].width = (
+                56 if name.endswith("_times") else min(56, max(15, len(name) + 3))
+            )
         headers = []
         for name in table:
             cell = WriteOnlyCell(sheet, value=name)

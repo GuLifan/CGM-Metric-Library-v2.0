@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 from test_drq_delivery import inputs
 
 from cgm_library.contracts.schema import load_config
@@ -197,8 +198,11 @@ def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monk
         request, config, tmp_path, "source_run", workers=1, extended=True, prefix="SOURCE"
     )
     path = root / "results/SOURCE_AfterDischarge_Daily_D1-14.xlsx"
-    book = load_workbook(path, read_only=True)
+    book = load_workbook(path, read_only=False)
     assert book.sheetnames == [f"Day {n}" for n in range(1, 15)]
+    for index, column in enumerate(after_day_columns(), 1):
+        if column.endswith("_times"):
+            assert book["Day 1"].column_dimensions[get_column_letter(index)].width == 56
     for n in range(1, 15):
         rows = list(book[f"Day {n}"].values)
         assert len(rows) == 2 and list(rows[0]) == after_day_columns()
