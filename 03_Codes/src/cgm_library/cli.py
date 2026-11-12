@@ -30,6 +30,17 @@ def main() -> int:
     drq.add_argument("--workers", type=int, default=4)
     drq.add_argument("--resume", action="store_true")
     drq.add_argument("--accept-partial", action="store_true")
+    deliver = commands.add_parser(
+        "deliver", help="同批生成精简DRQ、ATTD、出院后逐日与低血糖事件明细"
+    )
+    deliver.add_argument("--request", type=Path, required=True)
+    deliver.add_argument("--config", type=Path, required=True)
+    deliver.add_argument("--output-root", type=Path, required=True)
+    deliver.add_argument("--run-id", required=True)
+    deliver.add_argument("--workers", type=int, default=4)
+    deliver.add_argument("--resume", action="store_true")
+    deliver.add_argument("--prefix", default="DRQ261112_CML2.0_2204")
+    deliver.add_argument("--accept-partial", action="store_true")
     compact = commands.add_parser("collapse", help="将结果ZIP无损浓缩到一张患者CSV")
     compact.add_argument("--archive", type=Path, required=True)
     compact.add_argument("--flat-results", type=Path, required=True)
@@ -50,7 +61,7 @@ def main() -> int:
     if not args.accept_partial:
         parser.error("MAGE参考验收未完成；试运行需 --accept-partial")
     try:
-        if args.command == "drq":
+        if args.command in ("drq", "deliver"):
             from cgm_library.workflows.drq_batch import run_drq_batch
 
             output = run_drq_batch(
@@ -60,6 +71,7 @@ def main() -> int:
                 args.run_id,
                 workers=args.workers,
                 resume=args.resume,
+                **({"extended": True, "prefix": args.prefix} if args.command == "deliver" else {}),
             )
         else:
             output = run_partial_batch(args.request, args.config, args.output_root, args.run_id)

@@ -16,15 +16,20 @@ from cgm_library.metrics.core import pooled_metrics
 from cgm_library.metrics.daily import adrr_by_day
 from cgm_library.metrics.fasting import fasting_cv, fasting_values
 from cgm_library.qc.raw import RawEvidenceError, clean_observations
+from cgm_library.sampling.fixed_clock import extract_sparse20
+from cgm_library.studies.attd.full import full7_features
+from cgm_library.studies.attd.sparse import sparse_features
 from cgm_library.studies.drq import (
     CONDITIONAL_FIELDS,
     CORE,
     EVENT_FIELDS,
     PERIODS,
+    post_discharge_windows,
     research_windows,
 )
 from cgm_library.timeline.groups import OverfullMinuteSlot, make_groups
 from cgm_library.windows.coverage import window_view
+from cgm_library.windows.definitions import study_windows
 from cgm_library.workflows.periods import day_night_periods
 from cgm_library.workflows.window import calculate_confirmed_window
 
@@ -118,6 +123,7 @@ class DrqCalculator:
         period_data = {p: [] for p in PERIODS}
         night_nadirs = []
         night_facts = []
+        day_facts = []
         for period, date, left, right in day_night_periods(start, end):
             view, qc, facts = self.period(left, right)
             period_data[period].append((view, qc, facts))
@@ -146,6 +152,8 @@ class DrqCalculator:
                         "sufficient_flag": qc["sufficient_flag"],
                     }
                 )
+            else:
+                day_facts.extend(facts)
         for period, parts in period_data.items():
             valid_minutes = sum(qc["valid_minutes"] for _, qc, _ in parts)
             window_minutes = sum(qc["window_minutes"] for _, qc, _ in parts)
@@ -164,9 +172,19 @@ class DrqCalculator:
             row[f"{period}__coverage_pct"] = coverage
             row[f"{period}__sufficient_flag"] = enough
         row["night_00to06__nadirs_json"] = result_json(night_nadirs)
+        # Preserve threshold membership before four-place export rounding.
+        for facts in (events, night_facts, day_facts):
+            for fact in facts:
+                fact["hypo_cond_thresholds"] = (
+                    "|".join(f"{n / 10:.1f}" for n in range(30, 39) if fact["nadir"] < n / 10)
+                    if fact["event_type"] == "hypo_episode_lt3p9"
+                    else ""
+                )
         evidence = {
             "events": events,
             "night_events": night_facts,
+            "day_events": day_facts,
+            "night_nadirs": night_nadirs,
             "days": days,
             "mornings": mornings,
         }
@@ -174,7 +192,7 @@ class DrqCalculator:
         return row, evidence
 
 
-def calculate_drq_patient(request, config):
+def calculate_drq_patient(request, config, *, extended=False):
     source, source_config = locate_source(request, config)
     content = source.read_bytes()
     digest = hashlib.sha256(content).hexdigest()
@@ -214,6 +232,19 @@ def calculate_drq_patient(request, config):
         pump_start,
         pump_end,
     )
+    if extended:
+        windows.update(
+            study_windows(
+                groups.group_start.iloc[0],
+                groups.group_end.iloc[-1],
+                admission,
+                discharge,
+                pump_start
+                if pump_reason not in ("PUMP_STOP_NOT_AFTER_START", "PUMP_TIME_INVALID")
+                else None,
+            )
+        )
+        windows.update(post_discharge_windows(discharge, groups.group_end.iloc[-1]))
     calculator = DrqCalculator(groups, observations, admission, discharge, config.coverage_pct)
     tables, audit = {}, {}
     daily_quality = {}
@@ -227,6 +258,7 @@ def calculate_drq_patient(request, config):
             continue
         row, evidence = calculator.calculate(start, end)
         row = row.copy()
+        row["window_name"] = name
         if name == "all_record":
             mornings = fasting_values(groups, admission, discharge, admission, discharge)
             f = fasting_cv(mornings)
@@ -234,11 +266,18 @@ def calculate_drq_patient(request, config):
                 f["fasting_cgm_0600_cv_pct"] = np.nan
             row.update(f)
             evidence = evidence | {"mornings": mornings}
-        if name.startswith("cgm_day_"):
-            number = int(name.removeprefix("cgm_day_"))
-            daily_quality[number] = row["sufficient_flag"]
+        daily_prefix = next(
+            (p for p in ("cgm_day_", "post_discharge_day_") if name.startswith(p)), None
+        )
+        if daily_prefix:
+            number = int(name.removeprefix(daily_prefix))
+            daily_quality[daily_prefix, number] = row["sufficient_flag"]
             value = np.nan
-            if number > 1 and row["sufficient_flag"] and daily_quality.get(number - 1, False):
+            if (
+                number > 1
+                and row["sufficient_flag"]
+                and daily_quality.get((daily_prefix, number - 1), False)
+            ):
                 view, _ = window_view(groups, start, end)
                 previous, _ = window_view(groups, start - pd.Timedelta(days=1), start)
                 before = previous.set_index("group_start").glucose_clean.dropna()
@@ -247,7 +286,12 @@ def calculate_drq_patient(request, config):
                 diff = abs(current.to_numpy() - aligned)
                 if np.isfinite(diff).any():
                     value = float(np.nanmean(diff))
-            row["MODD_vs_previous_cgm_day_mmol_L"] = value
+            field = (
+                "MODD_vs_previous_discharge_day_mmol_L"
+                if daily_prefix == "post_discharge_day_"
+                else "MODD_vs_previous_cgm_day_mmol_L"
+            )
+            row[field] = value
         tables[name] = row
         audit[name] = {
             "reason": row["metric_reason"],
@@ -260,6 +304,21 @@ def calculate_drq_patient(request, config):
             "window_start": start,
             "window_end": end,
             **evidence,
+        }
+    features = {}
+    if extended:
+        feature_names = ("all_record", "inpatient", "pre72h", "pre24h", "pump_d1", "pump_d3")
+        feature_rows = pd.DataFrame([tables[n] for n in feature_names if n in tables])
+        full = full7_features(groups, feature_rows, discharge, coverage_min_pct=config.coverage_pct)
+        if pump_reason in ("PUMP_STOP_NOT_AFTER_START", "PUMP_TIME_INVALID"):
+            for key in ("pump_d1d3_reason", "mean_pump_d1_reason", "delta_mean_pump_d3_d1_reason"):
+                full[key] = pump_reason
+        targets, candidates = extract_sparse20(observations, origin, discharge)
+        features = {
+            "full7": full,
+            "sparse5": sparse_features(targets),
+            "sparse_targets": targets.to_dict("records"),
+            "sparse_candidates": candidates.to_dict("records"),
         }
     fbs = {}
     for number in range(1, 15):
@@ -276,4 +335,7 @@ def calculate_drq_patient(request, config):
         "source_interval_min": source_config.interval_min,
         "source_unit": source_config.unit,
         "raw_qc": raw_qc,
+        "features": features,
+        "source_folder": source.parent.name,
+        "warning_codes": "CGM_START_AT_OR_AFTER_DISCHARGE" if origin >= discharge else "",
     }

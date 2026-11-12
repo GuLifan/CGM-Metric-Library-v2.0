@@ -29,10 +29,17 @@ def _save(path, data):
 
 
 def _worker(task):
-    index, row, config, path = task
+    index, row, config, path, extended = task
     try:
-        result = calculate_drq_patient(row, config)
+        result = calculate_drq_patient(row, config, extended=extended)
         result.update(computation_status="COMPUTED", error_code="", error_message="")
+        if extended:
+            # Structured event facts and nadirs remain in audit. Do not duplicate
+            # them dozens of times as JSON strings in every conditional column.
+            for values in result["tables"].values():
+                for name in list(values):
+                    if name.endswith("_json"):
+                        del values[name]
     except (CalculationError, TimelineError) as exc:
         if isinstance(exc, CalculationError) and exc.scope == "batch":
             raise
@@ -126,9 +133,21 @@ def _export(root, request, request_columns):
     return records
 
 
-def run_drq_batch(request_path, config_path, output_root, run_id, workers=4, resume=False):
+def run_drq_batch(
+    request_path,
+    config_path,
+    output_root,
+    run_id,
+    workers=4,
+    resume=False,
+    *,
+    extended=False,
+    prefix=PREFIX,
+):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", run_id) or workers < 1:
         raise CalculationError("ERROR03", "Invalid run ID or worker count", "batch")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", prefix):
+        raise CalculationError("ERROR03", "Invalid delivery filename prefix", "batch")
     request_content = request_path.read_bytes()
     config_content = config_path.read_bytes()
     request = read_request(request_path, content=request_content)
@@ -146,7 +165,12 @@ def run_drq_batch(request_path, config_path, output_root, run_id, workers=4, res
         "request": hashlib.sha256(request_content).hexdigest(),
         "config": hashlib.sha256(config_content).hexdigest(),
     }
-    signature = {"inputs": inputs, "code_sha256": provenance["code_sha256"]}
+    signature = {
+        "inputs": inputs,
+        "code_sha256": provenance["code_sha256"],
+        "extended": extended,
+        "prefix": prefix,
+    }
     root = output_root / run_id
     state = {
         "run_id": run_id,
@@ -187,7 +211,7 @@ def run_drq_batch(request_path, config_path, output_root, run_id, workers=4, res
                     if _sha256(source) != saved["source_sha256"]:
                         raise ValueError("Original device file changed during resume")
                 continue
-            tasks.append((i, row, config, path))
+            tasks.append((i, row, config, path, extended))
         if workers == 1:
             for i, outcome in map(_worker, tasks):
                 print(f"Patient {i}/{len(request)} {outcome}", flush=True)
@@ -196,7 +220,13 @@ def run_drq_batch(request_path, config_path, output_root, run_id, workers=4, res
                 for n, (i, outcome) in enumerate(pool.map(_worker, tasks, chunksize=1), 1):
                     if n % 25 == 0 or n == len(tasks):
                         print(f"Completed {n}/{len(tasks)} pending patients", flush=True)
-        records = _export(root, request, request_columns)
+        delivery_stats = {}
+        if extended:
+            from cgm_library.workflows.delivery import export_delivery
+
+            records, delivery_stats = export_delivery(root, request, prefix)
+        else:
+            records = _export(root, request, request_columns)
         state["status"] = "COMPLETED_RESEARCH"
         state["completed_patients"] = len(records)
         state["patient_status_counts"] = dict(Counter(r["computation_status"] for r in records))
@@ -209,6 +239,9 @@ def run_drq_batch(request_path, config_path, output_root, run_id, workers=4, res
             "created_at_beijing": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
             "pending_rule_gates": ["MAGE_REFERENCE_VALIDATION"],
             "table_decimal_places": 4,
+            "delivery_revision": "261112" if extended else "261110",
+            "delivery_prefix": prefix,
+            "delivery_statistics": delivery_stats,
             "delivery_files": sorted(p.name for p in (root / "results").iterdir()),
             "outputs_sha256": {
                 p.relative_to(root).as_posix(): _sha256(p)

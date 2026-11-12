@@ -1,5 +1,11 @@
 # DRQ 结果交付 / DRQ result delivery
 
+当前261112交付采用`deliver`入口，详见[FOLLOWUP_DELIVERY.md](FOLLOWUP_DELIVERY.md)。下文保留261110的15文件布局与命令，供历史重现；当前交付不再包含analysis_id或大段事件JSON。
+
+The current 261112 delivery uses `deliver`; see the follow-up guide. The original 15-file
+layout below is retained for reproducibility. Current delivery tables omit analysis IDs and
+large event JSON cells.
+
 本功能于 2026-11-10 经用户批准，输出 13 张窗口 CSV、1 张 FBS CSV 和 1 个含 Day 1—14 的 Excel 工作簿。取消 NEW 专项表，新增 Mode7 泵期间窗口。全部输出保留请求清单顺序及每位患者。
 
 Approved on 2026-11-10. The delivery contains 13 window CSV files, one FBS CSV and one Excel workbook with 14 daily sheets. Mode7 covers the insulin pump period. Every delivery table retains the full request order.

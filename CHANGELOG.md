@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 · 261112 — Unified follow-up delivery
+
+- Accept recordings starting at or after discharge in both calculation entries; window and sparse-target eligibility remain independent.
+- Generate slim Mode/CGM daily, NewMetric, Full7, Sparse5 and patient outcomes from the same calculation.
+- Add exact 24-hour discharge-anchored daily results, retaining at least seven days and full denominators on the final day.
+- Add readable qualified hypoglycemia event details, censor evidence and pre-rounding conditional threshold membership.
+- Exclude analysis_id and timezone suffixes from delivery tables; retain four-place half-up rounding and Times New Roman workbooks.
+- Keep synthetic outputs outside _Outputs and record authorized cleanup of obsolete artifacts.
+
 ## 2.0.0 · 261110 — DRQ research delivery
 
 - Add 13 grouped-window CSVs, a 14-day FBS CSV and a 14-sheet daily workbook, including the actual pump treatment window.

@@ -77,13 +77,8 @@ def calculate_patient_partial(
     pump_invalid = bool(pump_start is not None and pump_end is not None and pump_end <= pump_start)
     if discharge <= admission:
         raise CalculationError("ERROR04", "出院须晚于入院", "patient")
-    if cgm_start >= discharge:
-        raise CalculationError(
-            "ERROR04",
-            f"首个有效 CGM 时刻 {cgm_start.isoformat()} 已达或晚于出院 "
-            f"{discharge.isoformat()}，请复核此次住院的设备记录。",
-            "patient",
-        )
+    # A valid file may start after discharge. Eligibility belongs to each window,
+    # so absent inpatient data must not discard valid CGM-day or follow-up data.
     windows = study_windows(
         groups.group_start.iloc[0],
         groups.group_end.iloc[-1],

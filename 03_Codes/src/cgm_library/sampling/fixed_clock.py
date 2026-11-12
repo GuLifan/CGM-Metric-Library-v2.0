@@ -32,8 +32,9 @@ def extract_sparse20(
     required = {"timestamp", "glucose_clean"}
     if not required.issubset(raw_observations) or "group_start" in raw_observations:
         raise ValueError("Sparse20 输入必须是有效原始观测，不得传入五分钟聚合表")
-    if discharge <= cgm_start:
-        raise ValueError("出院时刻必须晚于 CGM 首个有效原始时刻")
+    # A recording may start after discharge. Keep the existing pre-discharge
+    # target/candidate restriction below and report ineligible sparse targets,
+    # rather than aborting the patient's otherwise usable continuous metrics.
     valid = raw_observations.loc[raw_observations.glucose_clean.notna()].copy()
     valid = valid.sort_values("timestamp", kind="stable")
     if valid.empty or valid.timestamp.duplicated().any():

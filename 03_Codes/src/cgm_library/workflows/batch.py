@@ -17,7 +17,7 @@ import pandas as pd
 
 from cgm_library.contracts.fields import ASSETS, SCHEMA_VERSION, Asset
 from cgm_library.contracts.schema import CalculationError, load_config
-from cgm_library.io.reader import read_request
+from cgm_library.io.reader import parse_anchor, read_request
 from cgm_library.io.tables import write_csv, write_workbook
 from cgm_library.qc.raw import RawEvidenceError, raw_interval_distribution
 from cgm_library.timeline.groups import TimelineError
@@ -192,6 +192,8 @@ def _execute(output, config, config_bytes, request, request_bytes, statuses, sta
             )
             continue
         warnings = []
+        if result.qc["cgm_start_first_valid_raw_time"] >= parse_anchor(row["出院日期"]):
+            warnings.append("CGM_START_AT_OR_AFTER_DISCHARGE")
         if result.qc["pump_qc_reason"]:
             warnings.append(result.qc["pump_qc_reason"])
         if not result.window_rows.sufficient_flag.all():

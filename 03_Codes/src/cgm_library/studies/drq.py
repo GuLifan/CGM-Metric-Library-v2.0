@@ -102,3 +102,18 @@ def research_windows(origin, record_start, record_end, admission, discharge, pum
         **{f"cgm_day_{n}": (origin + (n - 1) * day, origin + n * day) for n in range(1, 15)},
     }
     return windows
+
+
+def post_discharge_windows(discharge, record_end, minimum_days=7):
+    """Fixed 24-hour follow-up days, retaining the final partial recording day.
+
+    The observation denominator remains 24 hours even when the file ends early.
+    A record ending exactly on a boundary does not create another follow-up day.
+    """
+    day = pd.Timedelta(days=1)
+    span = max(0, (record_end - discharge).value)
+    count = max(minimum_days, (span + day.value - 1) // day.value)
+    return {
+        f"post_discharge_day_{n}": (discharge + (n - 1) * day, discharge + n * day)
+        for n in range(1, count + 1)
+    }

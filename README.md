@@ -1,7 +1,7 @@
 # CGM Metric Library v2.0.0
 
 连续血糖监测（CGM）研究计算库 · Research software for continuous glucose monitoring  
-**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261110` (2026-11-10)
+**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261112` (2026-11-12)
 
 ## 项目沿革 / Project history
 
@@ -12,8 +12,30 @@
 | 2026-11-04 · v2.0.0 | 建立独立的 Python/uv 工程，将输入、时间轴、事件、窗口和输出规则写入版本化规范。固定合成测试、逐患者错误记录和资产哈希。正式 MAGE 等待参考验收。 | The independent Python/uv project introduced versioned contracts, synthetic tests, per-patient outcomes and file hashes. Formal MAGE remains pending reference validation. |
 | 2026-11-09 · 计算订正 | 同时刻重复值先按有效候选处理。五分钟槽按组首归窗，有效支持时长裁至窗末。标称一分钟来源的过满槽记录为患者级错误。 | Duplicate timestamps are resolved using valid readings. Slot starts determine window membership and support is clipped at the window end. Overfull slots in nominal one-minute data produce patient-level errors. |
 | 261109 · 表格订正 | 计算使用原精度，导出小数按十进制四舍五入至四位。Excel 表头、标签和数值统一为 Times New Roman。首个有效读数已达或晚于出院的请求记 ERROR04，继续下一例。 | Calculations retain working precision. Decimal results use four-place half-up rounding at export. Excel headers, labels and values use Times New Roman. A first valid reading at or after discharge produces a patient-level ERROR04. |
+| 261110 · DRQ扩展 | 新增13张窗口CSV、FBS序列、14张CGM日工作表和Mode7泵期间；DRQ入口允许出院后才开始记录。 | Added 13 window CSVs, FBS, 14 CGM-day sheets and Mode7. The DRQ entry accepts post-discharge-only recordings. |
+| 261111 · 交付精简 | 删除交付analysis_id，统一Mode删列，保留低血糖次数。NewMetric归档仍来自261109，因此与DRQ存在两例资格差异。 | Removed delivery analysis IDs and redundant Mode columns. Archived NewMetric remained from 261109, causing two eligibility differences. |
+| 261112 · 统一与随访 | 撤销旧入口对出院后才开始CGM的整例拒绝，Sparse目标按原协议保留缺失原因。Mode、daily、ATTD与NewMetric同批生成，新增出院后逐日和可读低血糖事件明细。 | Removed the old global rejection while retaining sparse-target eligibility reasons. Mode, daily, ATTD and NewMetric now share one run, with discharge-anchored daily results and readable hypoglycemia events. |
 
 ## 部署 / Deployment
+
+当前推荐使用`deliver`命令。它保留已批准的精简列，交付表不含analysis_id，出院后Dn严格遵从出院时刻加24小时的边界，末日分母仍为完整24小时。时间显示日期和时分秒，不添加时区后缀。CGM从出院后开始是允许情形，各窗口独立检查覆盖率。261112规则取代261109的整例ERROR04限制。
+
+Use `deliver` for the current revision. It retains the approved slim schema, omits delivery
+analysis IDs and creates exact 24-hour follow-up days anchored at discharge. The final day
+keeps a 24-hour denominator. Delivered timestamps show local dates and clock times without
+suffixes. A recording may start after discharge; eligibility is checked per window. This
+supersedes the 261109 global ERROR04 rule.
+
+完成下述安装后，从03_Codes执行当前交付命令，详细规则见[出院后逐日交付指南](04_Manuals/FOLLOWUP_DELIVERY.md)。
+
+After installation below, run the current delivery command from 03_Codes. The follow-up guide
+documents every table, window, event and missing-value rule.
+
+```sh
+uv run --frozen cgm-library deliver --request ../_RequestList/request.csv --config configs/site.local.yaml --output-root ../_Outputs --run-id CML2204_261112 --prefix DRQ261112_CML2.0_2204 --workers 4 --accept-partial
+uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112
+uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112 ../_Outputs/DRQ261112_CML2.0_2204.zip
+```
 
 261110 增加经批准的 DRQ 15 表输出、Mode7 胰岛素泵期间窗口，以及完整结果包的可还原单 CSV。操作详见下方 DRQ 交付指南。
 
