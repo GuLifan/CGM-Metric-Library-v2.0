@@ -1,7 +1,7 @@
 # CGM Metric Library v2.0.0
 
 连续血糖监测（CGM）研究计算库 · Research software for continuous glucose monitoring  
-**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261112` (2026-11-12)
+**计算库版本 / Package version** `2.0.0`　 **本次订正标识 / Revision label** `261112` (计算批次 / calculation batch), 布局 / layout `3` (2026-11-14)
 
 ## 项目沿革 / Project history
 
@@ -16,6 +16,7 @@
 | 261111 · 交付精简 | 删除交付analysis_id，统一Mode删列，保留低血糖次数。NewMetric归档仍来自261109，因此与DRQ存在两例资格差异。 | Removed delivery analysis IDs and redundant Mode columns. Archived NewMetric remained from 261109, causing two eligibility differences. |
 | 261112 · 统一与随访 | 撤销旧入口对出院后才开始CGM的整例拒绝，Sparse目标按原协议保留缺失原因。Mode、daily、ATTD与NewMetric同批生成，新增出院后逐日和可读低血糖事件明细。 | Removed the old global rejection while retaining sparse-target eligibility reasons. Mode, daily, ATTD and NewMetric now share one run, with discharge-anchored daily results and readable hypoglycemia events. |
 | 261112 · 布局订正2 | 参照DRQ旧表，在Mode0—Mode7及daily低血糖次数后紧邻加入时段列。出院后daily新增14个sheet，每张保留2204例；专门事件表和CSV长表保留。 | Added adjacent event-time columns to Mode and daily tables. Follow-up daily now has 14 sheets retaining the full cohort. Dedicated event details and the long CSV remain available. |
+| 261112 · 布局订正3（2026-11-14） | 事件时段同格添加当次最低值；出院时间切分daily新增“出院前24h”页，共15页。核验每个Mode表及两个daily每页的global_min。 | Event cells now include nadirs; discharge-anchored daily adds a pre-discharge 24h sheet (15 sheets total). Verify one whole-window global_min in every Mode table and daily sheet. |
 
 ## 部署 / Deployment
 
@@ -45,9 +46,9 @@ references hash-verified original audit records, so retain the source directory.
 ZIP remains available.
 
 ```sh
-uv run --frozen cgm-library relayout --source-run ../_Outputs/CML2204_261112 --output-root ../_Outputs --run-id CML2204_261112_layout2 --prefix DRQ261112_CML2.0_2204
-uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112_layout2
-uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112_layout2 ../_Outputs/DRQ261112_CML2.0_2204_layout2.zip
+uv run --frozen cgm-library relayout --source-run ../_Outputs/CML2204_261112 --output-root ../_Outputs --run-id CML2204_261112_layout3 --prefix DRQ261112_CML2.0_2204
+uv run --frozen python tools/validate_delivery.py ../_Outputs/CML2204_261112_layout3
+uv run --frozen python tools/package_delivery.py ../_Outputs/CML2204_261112_layout3 ../_Outputs/DRQ261112_CML2.0_2204_layout3.zip
 ```
 
 261110 增加经批准的 DRQ 15 表输出、Mode7 胰岛素泵期间窗口，以及完整结果包的可还原单 CSV。操作详见下方 DRQ 交付指南。

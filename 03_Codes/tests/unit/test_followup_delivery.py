@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from test_drq_delivery import inputs
@@ -15,12 +16,13 @@ from cgm_library.contracts.schema import load_config
 from cgm_library.io.reader import read_request
 from cgm_library.studies.delivery import (
     EVENT_COLUMNS,
+    PRE_DISCHARGE_SHEET,
     after_day_columns,
     event_time_column,
     mode_columns,
 )
 from cgm_library.studies.drq import post_discharge_windows
-from cgm_library.workflows.delivery import add_event_times
+from cgm_library.workflows.delivery import add_event_times, interval_text
 from cgm_library.workflows.drq_batch import run_drq_batch
 from cgm_library.workflows.drq_patient import calculate_drq_patient
 from cgm_library.workflows.layout import reexport_delivery
@@ -175,7 +177,9 @@ def test_adjacent_time_columns_use_unrounded_membership_and_independent_period_f
     }
     result = add_event_times(record, "test", row)
     assert result["hypo_cond_lt3p8_times"] == result["hypo_episode_lt3p9_times"]
-    assert result["hypo_episode_lt3p9_times"] == "2026-01-01 23:55:00 - 2026-01-02 00:15:00"
+    assert result["hypo_episode_lt3p9_times"] == (
+        "2026-01-01 23:55:00 - 2026-01-02 00:15:00 = 3.8000"
+    )
     assert result["night_00to06__hypo_episode_lt3p9_times"].startswith("2026-01-02 00:00:00")
     assert result["level2_period_lt3p0_times"] == ""
     assert result["day_06to24__hypo_episode_lt3p9_times"] is None
@@ -187,7 +191,33 @@ def test_adjacent_time_columns_use_unrounded_membership_and_independent_period_f
     assert event_time_column("prolonged_hyper_gt13p9_120_n") is None
 
 
-def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monkeypatch):
+def test_multiple_events_keep_their_own_nadirs_and_order():
+    first = {
+        "event_type": "hypo_episode_lt3p9",
+        "event_start": "2024-06-21T22:51:18+08:00",
+        "event_end": "2024-06-21T23:31:18+08:00",
+        "nadir": "3.20005",
+    }
+    second = first | {
+        "event_start": "2024-06-21T23:46:18+08:00",
+        "event_end": "2024-06-22T00:41:18+08:00",
+        "nadir": "3.4",
+    }
+    record = {"audit": {"test": {"events": [second, first]}}}
+    values = {"hypo_episode_lt3p9_n": 2}
+    result = add_event_times(record, "test", values)
+    assert result["hypo_episode_lt3p9_times"] == (
+        "2024-06-21 22:51:18 - 2024-06-21 23:31:18 = 3.2001; "
+        "2024-06-21 23:46:18 - 2024-06-22 00:41:18 = 3.4000"
+    )
+    assert interval_text(first["event_start"], first["event_end"]) == (
+        "2024-06-21 22:51:18 - 2024-06-21 23:31:18"
+    )
+    with pytest.raises(ValueError, match="disagree"):
+        add_event_times(record, "test", {"hypo_episode_lt3p9_n": 1})
+
+
+def test_followup_has_pre24h_and_14_days_and_relayout_does_not_recalculate(tmp_path, monkeypatch):
     request, config = inputs(tmp_path)
     source = tmp_path / "source/sample.csv"
     data = pd.read_csv(source)
@@ -199,7 +229,14 @@ def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monk
     )
     path = root / "results/SOURCE_AfterDischarge_Daily_D1-14.xlsx"
     book = load_workbook(path, read_only=False)
-    assert book.sheetnames == [f"Day {n}" for n in range(1, 15)]
+    assert book.sheetnames == [PRE_DISCHARGE_SHEET] + [f"Day {n}" for n in range(1, 15)]
+    pre_rows = list(book[PRE_DISCHARGE_SHEET].values)
+    pre = dict(zip(pre_rows[0], pre_rows[1], strict=True))
+    assert pre["post_discharge_day"] is None
+    assert pre["window_start"] == "2026-01-02 08:00:00"
+    assert pre["window_end"] == "2026-01-03 08:00:00"
+    assert pre["global_min"] == 6
+    assert pre["MODD_vs_previous_discharge_day_mmol_L"] is None
     for index, column in enumerate(after_day_columns(), 1):
         if column.endswith("_times"):
             assert book["Day 1"].column_dimensions[get_column_letter(index)].width == 56
@@ -210,7 +247,10 @@ def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monk
         assert record["post_discharge_day"] == n and record["住院号"] == "0001"
         if n == 1:
             assert record["hypo_episode_lt3p9_n"] == 1
-            assert record["hypo_episode_lt3p9_times"] == "2026-01-03 10:00:00 - 2026-01-03 10:15:00"
+            assert record["hypo_episode_lt3p9_times"] == (
+                "2026-01-03 10:00:00 - 2026-01-03 10:15:00 = 3.7500"
+            )
+            assert record["global_min"] == 3.75
         if n == 14:
             assert record["MEAN"] is None and record["coverage_pct"] == 0
             assert record["metric_reason"] == "NO_RECORDING_IN_WINDOW"
@@ -228,4 +268,4 @@ def test_followup_has_14_sheets_and_relayout_does_not_recalculate(tmp_path, monk
     validate = runpy.run_path(
         str(Path(__file__).resolve().parents[2] / "tools/validate_delivery.py")
     )["validate"]
-    assert validate(revised)["followup_workbook_rows"] == 14
+    assert validate(revised)["followup_workbook_rows"] == 15

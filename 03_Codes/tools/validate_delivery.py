@@ -21,6 +21,7 @@ from cgm_library.io.pump_request import PUMP_PREFIX
 from cgm_library.io.reader import parse_anchor
 from cgm_library.studies.delivery import (
     PERIODS,
+    PRE_DISCHARGE_SHEET,
     WINDOW_NAMES,
     after_day_columns,
     event_time_column,
@@ -60,7 +61,8 @@ def validate(root):
         with path.open("rb") as handle:
             assert hashlib.file_digest(handle, "sha256").hexdigest() == expected, name
     prefix = manifest["delivery_prefix"]
-    layout = manifest.get("delivery_layout_version", 1) >= 2
+    version = manifest.get("delivery_layout_version", 1)
+    layout = version >= 2
     audit_root = resolve_audit_root(root, manifest)
     out = root / "results"
     with (root / "request.csv").open(encoding="utf-8-sig", newline="") as handle:
@@ -110,11 +112,15 @@ def validate(root):
                 out / f"{prefix}_AfterDischarge_Daily_D1-14.xlsx", read_only=True
             )
             stack.callback(after_book.close)
-            assert after_book.sheetnames == [f"Day {n}" for n in range(1, 15)]
-            for n, sheet in enumerate(after_book, 1):
+            expected_names = ([PRE_DISCHARGE_SHEET] if version >= 3 else []) + [
+                f"Day {n}" for n in range(1, 15)
+            ]
+            assert after_book.sheetnames == expected_names
+            for n, sheet in enumerate(after_book, 0 if version >= 3 else 1):
                 iterator = sheet.iter_rows()
                 headers = [c.value for c in next(iterator)]
                 assert headers == after_day_columns()
+                assert headers.count("global_min") == 1
                 after_daily_readers[n] = headers, iterator
         summary = load_workbook(out / f"{prefix}_NewMetric_Summary.xlsx", read_only=True)
         stack.callback(summary.close)
@@ -127,6 +133,9 @@ def validate(root):
 
         def check_sheet(reader, expected, label):
             headers, iterator = reader
+            if "global_min" in headers:
+                assert headers.count("global_min") == 1
+                checked["window_minimum_cells"] += 1
             cells = next(iterator)
             for key, cell in zip(headers, cells, strict=True):
                 if cell.value is not None:
@@ -145,7 +154,7 @@ def validate(root):
             record = json.loads((audit_root / f"request_{i:04d}.json").read_text(encoding="utf-8"))
             if layout:
                 record["tables"] = {
-                    name: add_event_times(record, name, row)
+                    name: add_event_times(record, name, row, include_nadir=version >= 3)
                     for name, row in record["tables"].items()
                 }
             ident = tuple(req[k] for k in PUMP_PREFIX)
@@ -153,12 +162,22 @@ def validate(root):
             for window, suffix in GROUP_FILES.items():
                 reader = readers[f"{prefix}_{suffix}"]
                 assert reader.fieldnames == mode_columns(include_times=layout)
+                assert reader.fieldnames.count("global_min") == 1
+                checked["window_minimum_cells"] += 1
                 check(
                     next(reader), req | record["tables"].get(window, {}), reader.fieldnames, suffix
                 )
             for n, reader in daily_readers.items():
                 check_sheet(reader, req | record["tables"].get(f"cgm_day_{n}", {}), f"Day {n}")
             for n, reader in after_daily_readers.items():
+                if n == 0:
+                    saved = record["tables"].get("pre24h")
+                    if saved:
+                        discharge = parse_anchor(req["出院日期"])
+                        assert pd.Timestamp(saved["window_start"]) == discharge - pd.Timedelta(
+                            days=1
+                        )
+                        assert pd.Timestamp(saved["window_end"]) == discharge
                 check_sheet(
                     reader, req | followup_sheet_row(record, req, n), f"After discharge Day {n}"
                 )
@@ -318,7 +337,13 @@ def validate(root):
                         parts = value.split("; ") if value else []
                         assert len(parts) == (int(count) if count else 0)
                         for part in parts:
-                            start, end = part.split(" - ")
+                            if version >= 3:
+                                interval, nadir = part.rsplit(" = ", 1)
+                                assert re.fullmatch(r"-?\d+\.\d{4}", nadir)
+                                assert Decimal(nadir).is_finite()
+                            else:
+                                interval = part
+                            start, end = interval.split(" - ")
                             assert pd.Timestamp(start) < pd.Timestamp(end)
                             assert "+08:00" not in part and "UTC" not in part
                     if key not in TEXT_COLUMNS and re.fullmatch(r"-?\d+\.\d+", value or ""):
@@ -330,7 +355,7 @@ def validate(root):
         "hypoglycemia_event_rows", 0
     )
     if layout:
-        assert checked["followup_workbook_rows"] == 14 * len(requests)
+        assert checked["followup_workbook_rows"] == (15 if version >= 3 else 14) * len(requests)
     return dict(checked) | {
         "patient_count": len(requests),
         "delivery_file_count": len(manifest["delivery_files"]),

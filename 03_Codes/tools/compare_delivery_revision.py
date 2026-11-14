@@ -42,6 +42,13 @@ def compare(archive, root, previous_run):
             for key in a:
                 if key in ("window_start", "window_end"):
                     equal = local(a[key]) == local(b[key])
+                elif key.endswith("_times") and manifest.get("delivery_layout_version", 1) >= 3:
+                    # Layout 3 deliberately enriches text; original intervals must be identical.
+                    old_parts = [p.split(" = ", 1)[0] for p in (a[key] or "").split("; ")]
+                    new_parts = [p.split(" = ", 1)[0] for p in (b[key] or "").split("; ")]
+                    equal = old_parts == new_parts
+                    if a[key] != b[key]:
+                        counts["event_nadir_cells_enriched"] += 1
                 else:
                     equal = same(a[key], b[key])
                 if not equal:
@@ -116,6 +123,25 @@ def compare(archive, root, previous_run):
                 assert z.read(old_name) == (root / "results" / f"{prefix}_{suffix}").read_bytes(), (
                     suffix
                 )
+        followup_name = next(
+            (n for n in z.namelist() if n.endswith("AfterDischarge_Daily_D1-14.xlsx")), None
+        )
+        if followup_name:
+            old_book = load_workbook(io.BytesIO(z.read(followup_name)), read_only=True)
+            new_book = load_workbook(
+                root / "results" / f"{prefix}_AfterDischarge_Daily_D1-14.xlsx", read_only=True
+            )
+            for name in old_book.sheetnames:
+                ai, bi = old_book[name].values, new_book[name].values
+                ah, bh = next(ai), next(bi)
+                assert list(ah) == [k for k in bh if k in ah]
+                check_rows(
+                    [dict(zip(ah, r, strict=True)) for r in ai],
+                    [dict(zip(bh, r, strict=True)) for r in bi],
+                    "discharge_daily_workbook",
+                )
+            old_book.close()
+            new_book.close()
     source_mismatches = []
     old_audit = resolve_audit_root(previous_run, prior)
     new_audit = resolve_audit_root(root, manifest)

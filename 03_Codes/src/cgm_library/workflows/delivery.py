@@ -17,6 +17,7 @@ from cgm_library.io.tables import four_places, write_csv, write_workbook
 from cgm_library.studies.delivery import (
     EVENT_COLUMNS,
     PERIODS,
+    PRE_DISCHARGE_SHEET,
     QC_COLUMNS,
     WINDOW_NAMES,
     after_day_columns,
@@ -114,7 +115,7 @@ def _day_number(window):
     )
 
 
-def add_event_times(record, window, values):
+def add_event_times(record, window, values, *, include_nadir=True):
     """Use saved event facts and pre-rounding threshold membership, not rounded nadirs."""
     result = values.copy()
     evidence = record["audit"].get(window, {})
@@ -146,26 +147,28 @@ def add_event_times(record, window, values):
             raise ValueError(f"Saved event facts disagree with {window}/{column}")
         selected = sorted(selected, key=lambda e: (e["event_start"], e["event_end"]))
         result[target] = "; ".join(
-            interval_text(e["event_start"], e["event_end"]) for e in selected
+            interval_text(e["event_start"], e["event_end"], e["nadir"] if include_nadir else None)
+            for e in selected
         )
     return result
 
 
 @lru_cache(maxsize=65536)
-def interval_text(start, end):
-    return f"{local_time(start)} - {local_time(end)}"
+def interval_text(start, end, nadir=None):
+    text = f"{local_time(start)} - {local_time(end)}"
+    return text if nadir is None else f"{text} = {four_places(nadir)}"
 
 
 def followup_sheet_row(record, request, day):
-    """Pad the 14-sheet display without inventing metrics for unobserved follow-up days."""
+    """Day 0 displays saved pre24h; days 1–14 retain discharge-anchored follow-up."""
     from cgm_library.contracts.schema import CalculationError
     from cgm_library.io.reader import parse_anchor
 
-    name = f"post_discharge_day_{day}"
+    name = "pre24h" if day == 0 else f"post_discharge_day_{day}"
     values = record["tables"].get(name)
     if values is not None:
         return values | {
-            "post_discharge_day": day,
+            "post_discharge_day": day or None,
             "computation_status": record["computation_status"],
         }
     try:
@@ -175,7 +178,7 @@ def followup_sheet_row(record, request, day):
         start = end = None
     computed = record["computation_status"] == "COMPUTED"
     row = {
-        "post_discharge_day": day,
+        "post_discharge_day": day or None,
         "window_start": start,
         "window_end": end,
         "computation_status": record["computation_status"],
@@ -255,7 +258,7 @@ def export_delivery(root, request, prefix, *, audit_root=None):
     audit_root = audit_root or root / "audit"
     grouped = {name: [] for name in GROUP_FILES}
     daily = {n: [] for n in range(1, 15)}
-    followup_daily = {n: [] for n in range(1, 15)}
+    followup_daily = {n: [] for n in range(15)}
     fbs, statuses, overview, scalars, full, sparse = [], [], [], [], [], []
     counts = Counter()
     with ExitStack() as stack:
@@ -375,10 +378,14 @@ def export_delivery(root, request, prefix, *, audit_root=None):
     )
     write_workbook(
         out / f"{prefix}_AfterDischarge_Daily_D1-14.xlsx",
-        ((f"Day {n}", frame(rows, after_day_columns())) for n, rows in followup_daily.items()),
+        (
+            (PRE_DISCHARGE_SHEET if n == 0 else f"Day {n}", frame(rows, after_day_columns()))
+            for n, rows in followup_daily.items()
+        ),
     )
-    counts["after_discharge_workbook_rows"] = len(request) * 14
-    counts["after_discharge_workbook_sheets"] = 14
+    counts["after_discharge_workbook_rows"] = len(request) * 15
+    counts["after_discharge_workbook_sheets"] = 15
+    counts["pre_discharge_workbook_rows"] = len(request)
     counts["event_time_column_pairs_per_mode"] = sum(
         event_time_column(c) is not None for c in mode_columns(include_times=False)
     )
@@ -422,7 +429,7 @@ def export_delivery(root, request, prefix, *, audit_root=None):
     )
     write_csv(status_frame, root / "patient_status.csv")
     (out / "README.md").write_text(
-        f"""# CML v2.0.0 · 261112 布局订正2 / Delivery layout 2
+        f"""# CML v2.0.0 · 261112 布局订正3 / Delivery layout 3
 
 全部表格来自同一次计算，患者数 {len(request)}，完成处理 {sum(r["computation_status"] == "COMPUTED" for r in statuses)}。
 All tables come from one calculation, with {len(request)} requested patients.
@@ -437,10 +444,12 @@ CGM days start at the first valid reading. Post-discharge days start at discharg
 exactly 24 hours. The final recording day retains a full 24-hour coverage denominator.
 Days 1–7 retain all patients. Later days extend to each record's end. Metrics require 70% coverage.
 
-出院后daily的主要查看文件为AfterDischarge_Daily_D1-14.xlsx，含Day 1—Day 14，每张表保留全部患者。
+出院后daily的主要查看文件为AfterDischarge_Daily_D1-14.xlsx，含出院前24h及Day 1—Day 14，共15页，每张表保留全部患者。
 原CSV长表作为附加数据保留。Excel补充展示的无记录日保留日期、空白指标与原因，不延长观测或重算指标。
 
-The primary follow-up display is a 14-sheet workbook with all patients on each day.
+The primary follow-up display has 15 sheets: pre-discharge 24h, followed by Day 1–Day 14.
+Every sheet retains all patients. Pre-discharge spans [T−24h,T); its day number is blank.
+The long CSV remains post-discharge only. The added sheet reuses the saved pre24h calculation.
 The existing long CSV remains available. Padded days have anchors, missing metrics and a reason;
 padding does not extend observation or change computed values.
 
@@ -450,6 +459,16 @@ padding does not extend observation or change computed values.
 Night and day use clock-time intersections, 00:00–06:00 and 06:00–24:00.
 Follow-up daily tables omit inpatient fasting CV and within-window MODD. Previous-day MODD
 compares exact 24-hour pairs and requires both days to qualify; day 1 has no previous-day value.
+
+## 时间窗最低值 / Window-wide minimum
+
+global_min为整个时间窗有效CGM值的最低值，单位mmol/L；它独立于是否发生低血糖事件。
+每个Mode表、两个daily工作簿的每个sheet均保留一列global_min，原已有列不重复添加。
+夜间/白天的global_min分别仅限对应时段。覆盖率不足或无有效计算时仍留空，不将缺失当作零。
+
+Every Mode table and every sheet in both daily workbooks contains exactly one global_min
+for the whole window (mmol/L), including windows without hypoglycemia. Period-prefixed minima
+refer only to their period. Coverage eligibility is unchanged; unavailable minima remain blank.
 
 ## ATTD与患者状态 / ATTD and patient outcomes
 
@@ -465,7 +484,7 @@ Formal MAGE remains pending reference validation; its candidate is explicitly id
 ## 低血糖事件 / Hypoglycemia events
 
 Hypoglycemia Events每行是一位患者在一个窗口、一个时段内的一次指定类型事件。
-Mode和两类daily的每个低血糖次数列后紧邻_times列，多个起止区间用分号分隔，并保留日期以免跨日混淆。
+Mode和两类daily的每个低血糖次数列后紧邻_times列，每次以“起止时间 = 当次最低值”显示，最低值四位小数，多次用分号分隔。
 普通低血糖、Level2、延长低血糖等可以嵌套，不得跨类型或重叠窗口直接累加。
 只列相应时段覆盖合格的正式事件；未合格窗口的观测事实保存在audit中。
 duration_min为事件经过时长，condition_minutes为低于阈值的支持分钟。
@@ -474,7 +493,8 @@ hypo_cond_thresholds保留普通事件在舍入前满足的严格最低值阈值
 
 Each event row identifies a patient, window, period and event type.
 Mode and both daily layouts place a readable _times column immediately after each hypoglycemia count.
-Multiple date-and-time intervals are separated by semicolons. The dedicated event table is retained.
+Each entry is start - end = nadir_mmol_L; multiple entries are separated by semicolons.
+Nadirs use four-place half-up rounding. The dedicated event table is retained unchanged.
 Types can be nested and windows overlap; their counts must not be summed indiscriminately. Only qualified outcomes are
 exported here. Unqualified observed facts remain in audit. Elapsed duration and below-threshold
 minutes are distinct. Censor flags indicate incomplete observation. Conditional threshold

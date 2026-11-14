@@ -6,7 +6,8 @@ from cgm_library.io.pump_request import PUMP_PREFIX
 
 REVISION = "261112"
 DEFAULT_PREFIX = "DRQ261112_CML2.0_2204"
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
+PRE_DISCHARGE_SHEET = "出院前24h"
 PERIODS = ("night_00to06", "day_06to24")
 SLIM_MAIN = (
     [

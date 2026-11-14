@@ -16,6 +16,7 @@ from cgm_library.contracts.schema import CalculationError, load_config
 from cgm_library.io.pump_request import PUMP_PREFIX
 from cgm_library.io.reader import read_request
 from cgm_library.io.tables import write_csv, write_workbook
+from cgm_library.studies.delivery import LAYOUT_VERSION
 from cgm_library.studies.drq import GROUP_FILES, PREFIX, result_columns
 from cgm_library.timeline.groups import TimelineError
 from cgm_library.workflows.batch import _code_provenance, _sha256
@@ -240,7 +241,7 @@ def run_drq_batch(
             "pending_rule_gates": ["MAGE_REFERENCE_VALIDATION"],
             "table_decimal_places": 4,
             "delivery_revision": "261112" if extended else "261110",
-            "delivery_layout_version": 2 if extended else 1,
+            "delivery_layout_version": LAYOUT_VERSION if extended else 1,
             "delivery_prefix": prefix,
             "delivery_statistics": delivery_stats,
             "delivery_files": sorted(p.name for p in (root / "results").iterdir()),

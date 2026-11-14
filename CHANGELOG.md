@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 · 261112 layout 3 (2026-11-14) — Event nadirs and pre-discharge daily
+
+- 低血糖时段单元格改为“起始时间 - 结束时间 = 当次最低值”，四位小数，多次事件以分号分隔；专门事件表不变。
+- 出院时间切分daily增加“出院前24h”工作表，沿用[T−24h,T)，之后14个出院后日保持原边界；每页保留全部患者。
+- 明确并核验Mode表及两个daily每页已有的global_min（mmol/L）；不足覆盖率仍为空，不重复添加同义列。
+- Add event-specific nadirs to adjacent interval cells with four-place half-up rounding.
+- Add a pre-discharge 24h sheet before the 14 discharge-anchored follow-up days; reuse saved pre24h evidence.
+- Verify the existing whole-window global_min in every Mode and daily sheet; preserve eligibility, counts, event details and original calculations.
+
 ## 2.0.0 · 261112 layout 2 — Adjacent event times and daily sheets
 
 - Pair each retained hypoglycemia count with a readable adjacent interval column in Mode and both daily layouts.
